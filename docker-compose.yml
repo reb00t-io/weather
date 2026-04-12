@@ -1,0 +1,9 @@
+services:
+  weather:
+    build: .
+    container_name: weather
+    restart: unless-stopped
+    environment:
+      - PORT=${PORT}
+    ports:
+      - "${PORT}:${PORT}"

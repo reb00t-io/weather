@@ -2,11 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  build:
+  build_test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - run: echo "Hello, world!"
+      - uses: actions/checkout@v4
+      - run: grep '^export ' .envrc | sed -e 's/^export //' -e 's/="\(.*\)"/=\1/' >> "$GITHUB_ENV"
+      - run: ./scripts/build.sh linux/amd64
+      - run: ./test/e2e.sh
+        env:
+          SKIP_DOCKER_BUILD: 1
