@@ -735,22 +735,23 @@
       border-radius: var(--radius);
       overflow: hidden;
       border: 1px solid var(--border);
-      background: #1a1a2e;
+      background: #0f1520;
     }
 
     #radar-map {
       width: 100%;
       height: 65vh;
       min-height: 400px;
-      background: #2d3038;
+      background: #0f1520;
       z-index: 0;
       position: relative;
     }
 
     /* Override Leaflet tile gaps */
     .leaflet-tile-pane { opacity: 1; }
-    .leaflet-container { background: #2d3038; }
-    .leaflet-basemap-pane { filter: brightness(0.6) saturate(0.5); }
+    .leaflet-container { background: #1a2030; }
+    .leaflet-basemap-pane { filter: brightness(0.45) saturate(0.3); }
+    .leaflet-radar-pane { pointer-events: none; }
 
     /* ── Radar Controls ──────────────────────────────────── */
     .radar-controls {
@@ -1846,20 +1847,28 @@
 
     window._radarMap = radarMap;
 
-    // Base map: dimmed voyager for visible geography without overwhelming radar
+    // Panes: basemap (dimmed) < radar < labels
     radarMap.createPane('basemap');
     radarMap.getPane('basemap').style.zIndex = 200;
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
+
+    radarMap.createPane('radar');
+    radarMap.getPane('radar').style.zIndex = 400;
+
+    radarMap.createPane('labels');
+    radarMap.getPane('labels').style.zIndex = 500;
+
+    // Dark basemap (dimmed via CSS filter on .leaflet-basemap-pane)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
       maxZoom: 18,
       subdomains: 'abcd',
       pane: 'basemap',
     }).addTo(radarMap);
-    // Labels on top of radar (light text for dark-dimmed base)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png', {
+
+    // Labels on top of everything
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
       maxZoom: 18,
       subdomains: 'abcd',
-      zIndex: 20,
-      pane: 'overlayPane',
+      pane: 'labels',
     }).addTo(radarMap);
 
     // Zoom control bottom-right
@@ -1923,7 +1932,7 @@
         radarFrames.forEach((frame, i) => {
           radarLayers[i] = L.tileLayer(frame.path, {
             opacity: 0,
-            zIndex: 10,
+            pane: 'radar',
           });
           radarLayers[i].addTo(radarMap);
         });
