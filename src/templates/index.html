@@ -1558,6 +1558,18 @@
         // Start at last past frame
         radarIdx = past.length > 0 ? past.length - 1 : 0;
         slider.value = radarIdx;
+
+        // Preload ALL layers (hidden) so first playback doesn't flicker
+        radarLayers = {};
+        radarFrames.forEach((frame, i) => {
+          radarLayers[i] = L.tileLayer(frame.path, {
+            opacity: 0,
+            zIndex: 10,
+          });
+          radarLayers[i].addTo(radarMap);
+        });
+
+        // Show current frame once tiles are ready
         showRadarFrame(radarIdx);
       }
     } catch(e) {
@@ -1571,18 +1583,9 @@
 
   function showRadarFrame(idx) {
     const frame = radarFrames[idx];
-    if (!frame) return;
+    if (!frame || !radarLayers[idx]) return;
 
-    // Create layer if not cached
-    if (!radarLayers[idx]) {
-      radarLayers[idx] = L.tileLayer(frame.path, {
-        opacity: 0,
-        zIndex: 10,
-      });
-      radarLayers[idx].addTo(radarMap);
-    }
-
-    // Show this frame, hide previous
+    // Hide previous, show current
     if (radarLayer && radarLayer !== radarLayers[idx]) {
       radarLayer.setOpacity(0);
     }
