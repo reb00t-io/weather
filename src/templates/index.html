@@ -321,6 +321,12 @@
       margin-top: 0.25rem;
     }
 
+    .current-source {
+      font-size: 0.625rem;
+      opacity: 0.55;
+      margin-top: 0.125rem;
+    }
+
     .current-icon {
       font-size: 3.5rem;
       line-height: 1;
@@ -846,6 +852,7 @@
             <div>
               <div class="current-location" id="current-location"></div>
               <div class="current-date" id="current-date"></div>
+              <div class="current-source" id="current-source" style="display:none"></div>
             </div>
             <div class="current-icon" id="current-icon"></div>
           </div>
@@ -906,7 +913,7 @@
   </div>
 
   <div class="footer">
-    Daten: <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (DWD ICON) &middot;
+    Daten: <a href="https://brightsky.dev/" target="_blank" rel="noopener">Bright Sky</a> / <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> (DWD) &middot;
     Radar: <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> &middot;
     v{{ version }}
   </div>
@@ -1217,7 +1224,16 @@
     $('current-icon').textContent = icon(c.icon, c.is_day);
     $('current-desc').textContent = c.desc;
 
-    // Find current hourly entry for humidity etc.
+    // DWD station source
+    const srcEl = $('current-source');
+    if (c.source) {
+      srcEl.textContent = 'DWD ' + c.source;
+      srcEl.style.display = '';
+    } else {
+      srcEl.style.display = 'none';
+    }
+
+    // Find current hourly entry for precip probability (forecast-only metric)
     const ch = data.hourly.find(h => {
       const hd = new Date(h.time);
       return hd.getHours() === now.getHours() && hd.getDate() === now.getDate();
@@ -1226,8 +1242,8 @@
     $('current-details').innerHTML =
       detailCard('\uD83D\uDCA8', Math.round(c.wind || 0) + ' km/h', 'Wind') +
       detailCard('\uD83D\uDCA7', (ch.precip_prob ?? '--') + '%', 'Regen') +
-      detailCard('\uD83D\uDCA6', (ch.humidity ?? '--') + '%', 'Feuchte') +
-      detailCard('\u2601\uFE0F', (ch.cloud ?? '--') + '%', 'Wolken');
+      detailCard('\uD83D\uDCA6', (c.humidity ?? ch.humidity ?? '--') + '%', 'Feuchte') +
+      detailCard('\u2601\uFE0F', (c.cloud ?? ch.cloud ?? '--') + '%', 'Wolken');
 
     renderHourly(data.hourly, now);
     renderTempChart(data.daily);

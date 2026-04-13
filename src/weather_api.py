@@ -1,5 +1,6 @@
-"""Weather API routes using Open-Meteo as data source."""
+"""Weather API routes using Open-Meteo (forecasts) and Bright Sky / DWD (current observations)."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -11,6 +12,7 @@ weather_bp = Blueprint("weather", __name__)
 
 OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search"
+BRIGHTSKY_CURRENT = "https://api.brightsky.dev/current_weather"
 
 # WMO weather code -> (description, icon name)
 WMO_CODES = {
@@ -52,6 +54,126 @@ def _weather_code_info(code: int | None) -> dict:
     return {"description": desc, "icon": icon}
 
 
+# ── Bright Sky (DWD) icon -> our (description, icon) ────
+BRIGHTSKY_ICON_MAP = {
+    "clear-day": ("Klar", "clear"),
+    "clear-night": ("Klar", "clear"),
+    "partly-cloudy-day": ("Teilweise bewölkt", "partly-cloudy"),
+    "partly-cloudy-night": ("Teilweise bewölkt", "partly-cloudy"),
+    "cloudy": ("Bewölkt", "overcast"),
+    "fog": ("Nebel", "fog"),
+    "wind": ("Windig", "clear"),
+    "rain": ("Regen", "rain"),
+    "sleet": ("Schneeregen", "freezing-rain"),
+    "snow": ("Schneefall", "snow"),
+    "hail": ("Gewitter mit Hagel", "thunderstorm-hail"),
+    "thunderstorm": ("Gewitter", "thunderstorm"),
+}
+
+
+async def _fetch_openmeteo(session, params):
+    """Fetch forecast data from Open-Meteo."""
+    try:
+        async with session.get(OPEN_METEO_FORECAST, params=params) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                logger.error("Open-Meteo error %s: %s", resp.status, text)
+                return None
+            return await resp.json()
+    except Exception as e:
+        logger.error("Open-Meteo fetch failed: %s", e)
+        return None
+
+
+async def _fetch_brightsky(session, lat, lon):
+    """Fetch current observations from Bright Sky (DWD stations)."""
+    try:
+        params = {"lat": lat, "lon": lon, "tz": "Europe/Berlin", "units": "dwd"}
+        async with session.get(BRIGHTSKY_CURRENT, params=params) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.json()
+    except Exception as e:
+        logger.debug("Bright Sky fetch failed: %s", e)
+        return None
+
+
+def _parse_brightsky_current(bs_data, is_day_fallback=None):
+    """Parse Bright Sky current_weather response into our format.
+
+    Returns a dict matching our ``current`` response shape, or None on failure.
+    """
+    if not bs_data or "weather" not in bs_data:
+        return None
+
+    w = bs_data["weather"]
+
+    # Require at least a valid temperature
+    if w.get("temperature") is None:
+        return None
+
+    bs_icon = w.get("icon") or ""
+    mapped = BRIGHTSKY_ICON_MAP.get(bs_icon)
+    if not mapped:
+        return None
+    desc, our_icon = mapped
+
+    # is_day from icon suffix, fall back to Open-Meteo value
+    if bs_icon.endswith("-day"):
+        is_day = 1
+    elif bs_icon.endswith("-night"):
+        is_day = 0
+    else:
+        is_day = is_day_fallback
+
+    # Refine 'wind' icon using cloud_cover
+    cloud = w.get("cloud_cover")
+    if bs_icon == "wind" and cloud is not None:
+        if cloud < 25:
+            desc, our_icon = ("Klar", "clear")
+        elif cloud < 75:
+            desc, our_icon = ("Teilweise bewölkt", "partly-cloudy")
+        else:
+            desc, our_icon = ("Bewölkt", "overcast")
+
+    # Refine rain/snow intensity from 10-min precipitation
+    precip_10 = w.get("precipitation_10") or 0
+    if bs_icon == "rain":
+        if precip_10 < 0.2:
+            desc, our_icon = ("Leichter Regen", "rain-light")
+        elif precip_10 >= 2.0:
+            desc, our_icon = ("Starker Regen", "rain-heavy")
+    elif bs_icon == "snow":
+        if precip_10 < 0.3:
+            desc, our_icon = ("Leichter Schneefall", "snow-light")
+        elif precip_10 >= 2.0:
+            desc, our_icon = ("Starker Schneefall", "snow-heavy")
+
+    # Build source station info
+    source = None
+    sources = bs_data.get("sources", [])
+    if sources:
+        src = sources[0]
+        name = src.get("station_name", "")
+        dist_m = src.get("distance", 0)
+        dist_km = round(dist_m / 1000, 1)
+        source = f"{name} ({dist_km} km)"
+
+    return {
+        "temp": w.get("temperature"),
+        "wind": w.get("wind_speed_10"),
+        "wind_dir": w.get("wind_direction_10"),
+        "humidity": w.get("relative_humidity"),
+        "cloud": cloud,
+        "code": None,
+        "icon": our_icon,
+        "desc": desc,
+        "is_day": is_day,
+        "time": w.get("timestamp"),
+        "source": source,
+    }
+
+
 @weather_bp.route("/api/geocode")
 async def geocode():
     q = request.args.get("q", "").strip()
@@ -81,7 +203,7 @@ async def weather():
     except (KeyError, ValueError):
         return jsonify({"error": "lat and lon required"}), 400
 
-    params = {
+    om_params = {
         "latitude": lat,
         "longitude": lon,
         "hourly": ",".join([
@@ -115,20 +237,44 @@ async def weather():
         "models": "icon_seamless",
     }
 
+    # Fetch Open-Meteo forecasts and Bright Sky observations in parallel
     async with aiohttp.ClientSession() as s:
-        async with s.get(OPEN_METEO_FORECAST, params=params) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                logger.error("Open-Meteo error %s: %s", resp.status, text)
-                return jsonify({"error": "Weather API error"}), 502
-            data = await resp.json()
+        om_data, bs_data = await asyncio.gather(
+            _fetch_openmeteo(s, om_params),
+            _fetch_brightsky(s, lat, lon),
+        )
 
-    current = data.get("current_weather", {})
-    current_code = current.get("weathercode")
-    current_info = _weather_code_info(current_code)
+    if om_data is None:
+        return jsonify({"error": "Weather API error"}), 502
 
-    # Build hourly array
-    hourly_raw = data.get("hourly", {})
+    # ── Current weather: prefer real DWD observations ────
+    om_current = om_data.get("current_weather", {})
+    bs_current = _parse_brightsky_current(
+        bs_data, is_day_fallback=om_current.get("is_day"),
+    )
+
+    if bs_current:
+        current_out = bs_current
+    else:
+        # Fallback to Open-Meteo model data
+        current_code = om_current.get("weathercode")
+        current_info = _weather_code_info(current_code)
+        current_out = {
+            "temp": om_current.get("temperature"),
+            "wind": om_current.get("windspeed"),
+            "wind_dir": om_current.get("winddirection"),
+            "humidity": None,
+            "cloud": None,
+            "code": current_code,
+            "icon": current_info["icon"],
+            "desc": current_info["description"],
+            "is_day": om_current.get("is_day"),
+            "time": om_current.get("time"),
+            "source": None,
+        }
+
+    # ── Hourly forecast ─────────────────────────────────────
+    hourly_raw = om_data.get("hourly", {})
     times = hourly_raw.get("time", [])
     hourly = []
     for i, t in enumerate(times):
@@ -150,8 +296,8 @@ async def weather():
             "desc": info["description"],
         })
 
-    # Build daily array
-    daily_raw = data.get("daily", {})
+    # ── Daily forecast ──────────────────────────────────────
+    daily_raw = om_data.get("daily", {})
     daily_times = daily_raw.get("time", [])
     daily = []
     for i, t in enumerate(daily_times):
@@ -175,16 +321,7 @@ async def weather():
         })
 
     return jsonify({
-        "current": {
-            "temp": current.get("temperature"),
-            "wind": current.get("windspeed"),
-            "wind_dir": current.get("winddirection"),
-            "code": current_code,
-            "icon": current_info["icon"],
-            "desc": current_info["description"],
-            "is_day": current.get("is_day"),
-            "time": current.get("time"),
-        },
+        "current": current_out,
         "hourly": hourly,
         "daily": daily,
     })
