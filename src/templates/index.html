@@ -756,8 +756,8 @@
 
     /* Override Leaflet tile gaps */
     .leaflet-tile-pane { opacity: 1; }
-    .leaflet-container { background: #1a2030; }
-    .leaflet-basemap-pane { filter: brightness(0.45) saturate(0.3); }
+    .leaflet-container { background: #1e2a3a; }
+    .leaflet-basemap-pane { filter: brightness(0.75) saturate(0.5); }
     .leaflet-radar-pane { pointer-events: none; }
 
     /* ── Radar Controls ──────────────────────────────────── */
@@ -1864,8 +1864,8 @@
     radarMap.createPane('labels');
     radarMap.getPane('labels').style.zIndex = 500;
 
-    // Dark basemap (dimmed via CSS filter on .leaflet-basemap-pane)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
+    // Basemap (dimmed via CSS filter on .leaflet-basemap-pane)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
       maxZoom: 18,
       subdomains: 'abcd',
       pane: 'basemap',
@@ -1917,34 +1917,64 @@
 
       radarFrames = [];
       for (const f of past) {
-        radarFrames.push({ time: f.time, path: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'past' });
+        radarFrames.push({ time: f.time, url: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'past', wms: false });
       }
       for (const f of nowcast) {
-        radarFrames.push({ time: f.time, path: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'forecast' });
+        radarFrames.push({ time: f.time, url: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'forecast', wms: false });
       }
+
+      // If no nowcast from RainViewer, add DWD RADVOR forecast (2h, 15-min steps)
+      if (nowcast.length === 0 && past.length > 0) {
+        const lastPastTime = past[past.length - 1].time;
+        for (let m = 15; m <= 120; m += 15) {
+          const t = lastPastTime + m * 60;
+          const iso = new Date(t * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+          radarFrames.push({
+            time: t,
+            url: 'https://maps.dwd.de/geoserver/dwd/wms',
+            wmsParams: {
+              layers: 'dwd:RV-Produkt',
+              format: 'image/png',
+              transparent: true,
+              version: '1.3.0',
+              time: iso,
+            },
+            type: 'forecast',
+            wms: true,
+          });
+        }
+      }
+
+      const pastCount = past.length;
 
       if (radarFrames.length) {
         const slider = $('radar-slider');
         slider.max = radarFrames.length - 1;
-        // Start at last past frame
-        radarIdx = past.length > 0 ? past.length - 1 : 0;
+        radarIdx = pastCount > 0 ? pastCount - 1 : 0;
         slider.value = radarIdx;
 
         // Gradient on slider track: blue = past, amber = forecast
-        const pastPct = (past.length / radarFrames.length * 100).toFixed(1);
+        const pastPct = (pastCount / radarFrames.length * 100).toFixed(1);
         slider.style.background = 'linear-gradient(90deg, rgba(96,165,250,0.35) 0%, rgba(96,165,250,0.35) ' + pastPct + '%, rgba(251,191,36,0.35) ' + pastPct + '%, rgba(251,191,36,0.35) 100%)';
 
         // Preload ALL layers (hidden) so first playback doesn't flicker
         radarLayers = {};
         radarFrames.forEach((frame, i) => {
-          radarLayers[i] = L.tileLayer(frame.path, {
-            opacity: 0,
-            pane: 'radar',
-          });
+          if (frame.wms) {
+            radarLayers[i] = L.tileLayer.wms(frame.url, {
+              ...frame.wmsParams,
+              opacity: 0,
+              pane: 'radar',
+            });
+          } else {
+            radarLayers[i] = L.tileLayer(frame.url, {
+              opacity: 0,
+              pane: 'radar',
+            });
+          }
           radarLayers[i].addTo(radarMap);
         });
 
-        // Show current frame once tiles are ready
         showRadarFrame(radarIdx);
       }
     } catch(e) {
