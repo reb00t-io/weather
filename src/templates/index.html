@@ -1223,10 +1223,10 @@
   // ── Sun bar color: blend yellow (sunny) to warm light gray (cloudy) ──
   // sun = 0..1 (0 = full clouds, 1 = clear sky)
   function sunBarColor(sun) {
-    // Sunny: rgb(250, 204, 30)  Cloudy: rgb(180, 175, 160)
-    const r = Math.round(180 + sun * (250 - 180));
-    const g = Math.round(175 + sun * (204 - 175));
-    const b = Math.round(160 + sun * (30 - 160));
+    // Sunny: rgb(245, 205, 50)  Cloudy/no sun: rgb(220, 215, 195)
+    const r = Math.round(220 + sun * (245 - 220));
+    const g = Math.round(215 + sun * (205 - 215));
+    const b = Math.round(195 + sun * (50 - 195));
     return 'rgb(' + r + ',' + g + ',' + b + ')';
   }
 
