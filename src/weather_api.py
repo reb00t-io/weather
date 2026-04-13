@@ -339,7 +339,6 @@ async def weather():
         "current_weather": "true",
         "timezone": "Europe/Berlin",
         "forecast_days": 14,
-        "models": "icon_seamless",
     }
 
     # Fetch all data sources in parallel
