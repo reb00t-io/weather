@@ -55,13 +55,16 @@ if [ "$last_status" != "200" ]; then
 fi
 
 echo "checking response..."
-body=$(curl -sf http://localhost:"$PORT")
+body_file=$(mktemp)
+curl -sf http://localhost:"$PORT" > "$body_file"
 
-if ! echo "$body" | grep -q "Wetter"; then
+if ! grep -q "Wetter" "$body_file"; then
   echo "FAIL: response does not contain 'Wetter'"
-  echo "$body" | head -20
+  head -20 "$body_file"
+  rm -f "$body_file"
   exit 1
 fi
+rm -f "$body_file"
 
 echo "checking API endpoints..."
 # API requires Bearer auth
