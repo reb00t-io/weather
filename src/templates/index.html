@@ -321,12 +321,12 @@
       z-index: 0;
     }
 
-    .current-card-bg.loaded { opacity: 0.3; }
+    .current-card-bg.loaded { opacity: 0.55; }
 
     .current-card-overlay {
       position: absolute;
       inset: 0;
-      background: linear-gradient(135deg, rgba(0,0,0,0.4), rgba(0,0,0,0.2));
+      background: linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.15) 40%, rgba(0,0,0,0.4) 100%);
       z-index: 0;
     }
 
@@ -374,6 +374,7 @@
       font-size: 1.25rem;
       font-weight: 700;
       line-height: 1.2;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.5);
     }
 
     .current-date {
@@ -408,6 +409,7 @@
       font-weight: 200;
       line-height: 1;
       letter-spacing: -3px;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.4);
     }
 
     .current-temp-unit {
@@ -421,6 +423,7 @@
       font-weight: 500;
       opacity: 0.9;
       margin-top: 0.25rem;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.5);
       position: relative;
       z-index: 1;
     }
@@ -1439,7 +1442,7 @@
       detailCard('\u2601\uFE0F', (c.cloud ?? ch.cloud ?? '--') + '%', 'Wolken');
 
     // City background image
-    loadCityImage(city, c);
+    loadCityImage(city);
 
     // Warnings
     renderWarnings(data.warnings || []);
@@ -1499,38 +1502,29 @@
   // ── City Background Image ─────────────────────────────
   let imageCache = {};
 
-  function loadCityImage(city, current) {
+  function loadCityImage(city) {
     const bgEl = $('current-card-bg');
     bgEl.classList.remove('loaded');
 
-    // Determine weather condition for image search
-    const iconName = current.icon || '';
-    let condition = 'cloud';
-    if (!current.is_day) condition = 'night';
-    else if (iconName === 'clear' || iconName === 'mostly-clear' || iconName === 'partly-cloudy') condition = 'sun';
-    else if (iconName.includes('rain') || iconName.includes('drizzle') || iconName.includes('shower')) condition = 'rain';
-    else if (iconName.includes('snow')) condition = 'snow';
+    const baseName = city.name.split(',')[0].trim();
 
-    // Use the main city name (strip station suffixes like "Berlin-Tempelhof")
-    const baseName = city.name.split('-')[0].split(',')[0].trim();
-    const cacheKey = baseName + '_' + condition;
-
-    if (imageCache[cacheKey]) {
-      bgEl.style.backgroundImage = 'url(' + imageCache[cacheKey] + ')';
+    if (imageCache[baseName]) {
+      bgEl.style.backgroundImage = 'url(' + imageCache[baseName] + ')';
       bgEl.classList.add('loaded');
       return;
     }
 
-    fetch('/api/city-image?city=' + encodeURIComponent(baseName) + '&condition=' + condition, { headers: AUTH_HEADERS })
+    fetch('/api/city-image?city=' + encodeURIComponent(baseName), { headers: AUTH_HEADERS })
       .then(r => r.json())
       .then(data => {
         if (!data.url) return;
         const img = new Image();
         img.onload = () => {
-          imageCache[cacheKey] = img.src;
+          imageCache[baseName] = img.src;
           bgEl.style.backgroundImage = 'url(' + img.src + ')';
           bgEl.classList.add('loaded');
         };
+        img.onerror = () => {};
         img.src = data.url;
       })
       .catch(() => {});

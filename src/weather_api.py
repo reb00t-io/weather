@@ -272,27 +272,45 @@ async def geocode():
 
 @weather_bp.route("/api/city-image")
 async def city_image():
-    """Return an Unsplash image URL for a city + weather condition."""
+    """Return a Wikipedia image URL for a city."""
     city = request.args.get("city", "").strip()
-    condition = request.args.get("condition", "").strip()  # sun, cloud, rain, snow, night
     if not city:
         return jsonify({"url": None})
 
-    # Build search query: city name + weather mood
-    mood_map = {
-        "sun": "sunny",
-        "cloud": "cloudy",
-        "rain": "rain",
-        "snow": "snow winter",
-        "night": "night skyline",
-    }
-    mood = mood_map.get(condition, "cityscape")
-    query = f"{city} {mood}"
+    async with aiohttp.ClientSession() as s:
+        # Try German Wikipedia first, then English
+        for lang in ("de", "en"):
+            url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{city}"
+            try:
+                async with s.get(url) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    orig = data.get("originalimage", {})
+                    thumb = data.get("thumbnail", {})
+                    img_src = orig.get("source") or thumb.get("source")
+                    if not img_src:
+                        continue
+                    # Skip SVGs and tiny images (coat of arms, icons)
+                    if img_src.lower().endswith(".svg"):
+                        continue
+                    if orig.get("width", 0) < 400 and thumb.get("width", 0) < 400:
+                        continue
+                    # Request a 1000px-wide thumbnail for fast loading
+                    if "/commons/" in img_src and "/thumb/" not in img_src:
+                        # Convert direct file URL to thumbnail URL
+                        img_src = img_src.replace(
+                            "/commons/", "/commons/thumb/"
+                        ) + "/1000px-" + img_src.rsplit("/", 1)[-1]
+                    elif "/thumb/" in img_src:
+                        # Replace existing thumbnail width
+                        parts = img_src.rsplit("/", 1)
+                        img_src = parts[0] + "/1000px-" + parts[1].split("px-", 1)[-1]
+                    return jsonify({"url": img_src})
+            except Exception:
+                continue
 
-    # Use Unsplash source API (no key needed, returns redirect to image)
-    # We return the URL for the client to load directly
-    url = f"https://source.unsplash.com/800x400/?{query.replace(' ', ',')}"
-    return jsonify({"url": url, "query": query})
+    return jsonify({"url": None})
 
 
 @weather_bp.route("/api/reverse-geocode")
