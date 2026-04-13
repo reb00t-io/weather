@@ -94,6 +94,7 @@ SAMPLE_WEATHER_RESPONSE = {
         "sunrise": [f"2026-04-{12+i}T06:{20+i:02d}" for i in range(7)],
         "sunset": [f"2026-04-{12+i}T20:{10+i:02d}" for i in range(7)],
         "uv_index_max": [3, 2, 6, 5, 1, 4, 7],
+        "sunshine_duration": [10800, 3600, 28800, 21600, 0, 18000, 36000],
     },
 }
 
@@ -278,7 +279,7 @@ async def test_weather_daily_contains_all_required_fields(client):
     data = await resp.get_json()
 
     required_fields = {"date", "temp_max", "temp_min", "precip_sum", "precip_prob",
-                       "wind_max", "wind_dir", "sunrise", "sunset", "uv_max",
+                       "wind_max", "wind_dir", "sunrise", "sunset", "uv_max", "sun_hours",
                        "code", "icon", "desc"}
     for d in data["daily"]:
         assert required_fields.issubset(d.keys()), f"Missing fields: {required_fields - set(d.keys())}"

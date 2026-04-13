@@ -1359,10 +1359,22 @@
     daily.forEach((d, i) => {
       const x = padL + i * colW + barPad;
       const w = colW - barPad * 2;
-      const sl = sunLevelFromIcon(d.icon);
 
-      // Sunshine bar (yellow-to-gray blend)
-      svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="' + sunBarColor(sl) + '"/>';
+      // Compute sun fraction from sun_hours / daylight_hours
+      const sunH = d.sun_hours || 0;
+      let daylightH = 14; // fallback
+      if (d.sunrise && d.sunset) {
+        const sr = new Date(d.sunrise), ss = new Date(d.sunset);
+        daylightH = Math.max(1, (ss - sr) / 3600000);
+      }
+      const sunFrac = Math.min(1, sunH / daylightH);
+
+      // Sunshine bar with hours label
+      svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="' + sunBarColor(sunFrac) + '"/>';
+      const sunLabel = sunH >= 1 ? Math.round(sunH) + 'h' : (sunH > 0 ? '<1h' : '');
+      if (sunLabel) {
+        svg += '<text x="' + (x + w / 2) + '" y="' + (sunY + botRowH / 2 + 4) + '" text-anchor="middle" fill="#555" font-size="9" font-weight="600" font-family="inherit">' + sunLabel + '</text>';
+      }
 
       // Rain bar (blue intensity by probability)
       const prob = d.precip_prob || 0;
