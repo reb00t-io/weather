@@ -270,6 +270,31 @@ async def geocode():
     return jsonify(results)
 
 
+@weather_bp.route("/api/city-image")
+async def city_image():
+    """Return an Unsplash image URL for a city + weather condition."""
+    city = request.args.get("city", "").strip()
+    condition = request.args.get("condition", "").strip()  # sun, cloud, rain, snow, night
+    if not city:
+        return jsonify({"url": None})
+
+    # Build search query: city name + weather mood
+    mood_map = {
+        "sun": "sunny",
+        "cloud": "cloudy",
+        "rain": "rain",
+        "snow": "snow winter",
+        "night": "night skyline",
+    }
+    mood = mood_map.get(condition, "cityscape")
+    query = f"{city} {mood}"
+
+    # Use Unsplash source API (no key needed, returns redirect to image)
+    # We return the URL for the client to load directly
+    url = f"https://source.unsplash.com/800x400/?{query.replace(' ', ',')}"
+    return jsonify({"url": url, "query": query})
+
+
 @weather_bp.route("/api/reverse-geocode")
 async def reverse_geocode():
     """Reverse geocode lat/lon to city name using Open-Meteo."""

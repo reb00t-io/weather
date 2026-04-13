@@ -193,6 +193,26 @@
       flex-shrink: 0;
     }
 
+    .search-result-item.recent .recent-info { flex: 1; min-width: 0; }
+
+    .recent-delete {
+      width: 24px;
+      height: 24px;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: color 0.15s, background 0.15s;
+      padding: 0;
+    }
+
+    .recent-delete:hover { color: #ef4444; background: rgba(239,68,68,0.1); }
+
     .search-result-item {
       padding: 0.75rem 1rem;
       cursor: pointer;
@@ -289,6 +309,25 @@
       color: #fff;
       background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%);
       box-shadow: 0 8px 32px rgba(59, 130, 246, 0.25);
+    }
+
+    .current-card-bg {
+      position: absolute;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+      opacity: 0;
+      transition: opacity 0.8s ease;
+      z-index: 0;
+    }
+
+    .current-card-bg.loaded { opacity: 0.3; }
+
+    .current-card-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(0,0,0,0.4), rgba(0,0,0,0.2));
+      z-index: 0;
     }
 
     /* Dynamic gradients based on condition */
@@ -756,8 +795,8 @@
 
     /* Override Leaflet tile gaps */
     .leaflet-tile-pane { opacity: 1; }
-    .leaflet-container { background: #1e2a3a; }
-    .leaflet-basemap-pane { filter: brightness(0.75) saturate(0.5); }
+    .leaflet-container { background: #2a3a2a; }
+    .leaflet-basemap-pane { filter: brightness(0.65) saturate(0.7); }
     .leaflet-radar-pane { pointer-events: none; }
 
     /* ── Radar Controls ──────────────────────────────────── */
@@ -857,7 +896,7 @@
       width: 120px;
       height: 6px;
       border-radius: 3px;
-      background: linear-gradient(90deg, #a0cfff, #4090e0, #2060c0, #1040a0, #082060);
+      background: linear-gradient(90deg, #88ddff, #44aaee, #2266dd, #3344cc, #6633aa);
     }
 
     /* ── Footer ──────────────────────────────────────────── */
@@ -959,6 +998,8 @@
         <div class="warnings-wrap" id="warnings-wrap"></div>
 
         <div class="current-card" id="current-card">
+          <div class="current-card-bg" id="current-card-bg"></div>
+          <div class="current-card-overlay"></div>
           <div class="current-top">
             <div>
               <div class="current-location" id="current-location"></div>
@@ -1170,23 +1211,39 @@
     clearTimeout(searchTimeout);
     updateClearBtn();
     const q = this.value.trim();
-    if (q.length < 2) {
-      if (q.length === 0) {
-        showRecentCities();
-      } else {
-        searchResults.classList.remove('open');
-      }
+    if (q.length === 0) {
+      showRecentCities();
       return;
     }
+    // Show matching recents immediately, fetch geocode after debounce
+    showMatchingRecents(q);
     searchTimeout = setTimeout(() => fetchGeocode(q), 250);
   });
 
+  function showMatchingRecents(q) {
+    const recents = getRecentCities();
+    const qLower = q.toLowerCase();
+    const matching = recents.filter(r => {
+      const haystack = [r.name, r.admin1, r.country].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(qLower);
+    });
+    if (matching.length) {
+      searchResults.innerHTML = '';
+      const label = document.createElement('div');
+      label.className = 'search-section-label';
+      label.textContent = 'Zuletzt gesucht';
+      searchResults.appendChild(label);
+      for (const r of matching) searchResults.appendChild(createRecentItem(r));
+      searchResults.classList.add('open');
+    }
+  }
+
   searchInput.addEventListener('focus', function() {
     const q = this.value.trim();
-    if (q.length < 2) {
+    if (q.length === 0) {
       showRecentCities();
-    } else if (searchResults.children.length) {
-      searchResults.classList.add('open');
+    } else {
+      showMatchingRecents(q);
     }
   });
 
@@ -1220,10 +1277,24 @@
     div.className = 'search-result-item recent';
     div.innerHTML =
       '<svg class="recent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
-      '<div><div class="search-result-name">' + esc(city.name) + '</div>' +
-      '<div class="search-result-region">' + esc([city.admin1, city.country].filter(Boolean).join(', ')) + '</div></div>';
-    div.addEventListener('click', () => selectCity(city));
+      '<div class="recent-info"><div class="search-result-name">' + esc(city.name) + '</div>' +
+      '<div class="search-result-region">' + esc([city.admin1, city.country].filter(Boolean).join(', ')) + '</div></div>' +
+      '<button class="recent-delete" aria-label="Entfernen"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+    div.querySelector('.recent-info').addEventListener('click', () => selectCity(city));
+    div.querySelector('.recent-icon').addEventListener('click', () => selectCity(city));
+    div.querySelector('.recent-delete').addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeRecentCity(city);
+      div.remove();
+      if (!searchResults.querySelector('.search-result-item')) searchResults.classList.remove('open');
+    });
     return div;
+  }
+
+  function removeRecentCity(city) {
+    let recents = getRecentCities();
+    recents = recents.filter(r => !(r.lat === city.lat && r.lon === city.lon));
+    localStorage.setItem('weather_recent', JSON.stringify(recents));
   }
 
   async function fetchGeocode(q) {
@@ -1367,6 +1438,9 @@
       detailCard('\uD83D\uDCA6', (c.humidity ?? ch.humidity ?? '--') + '%', 'Feuchte') +
       detailCard('\u2601\uFE0F', (c.cloud ?? ch.cloud ?? '--') + '%', 'Wolken');
 
+    // City background image
+    loadCityImage(city, c);
+
     // Warnings
     renderWarnings(data.warnings || []);
 
@@ -1420,6 +1494,46 @@
         '<div class="aqi-level">' + esc(aqi.level) + '</div>' +
         '<div class="aqi-details">' + details + '</div>' +
       '</div>';
+  }
+
+  // ── City Background Image ─────────────────────────────
+  let imageCache = {};
+
+  function loadCityImage(city, current) {
+    const bgEl = $('current-card-bg');
+    bgEl.classList.remove('loaded');
+
+    // Determine weather condition for image search
+    const iconName = current.icon || '';
+    let condition = 'cloud';
+    if (!current.is_day) condition = 'night';
+    else if (iconName === 'clear' || iconName === 'mostly-clear' || iconName === 'partly-cloudy') condition = 'sun';
+    else if (iconName.includes('rain') || iconName.includes('drizzle') || iconName.includes('shower')) condition = 'rain';
+    else if (iconName.includes('snow')) condition = 'snow';
+
+    // Use the main city name (strip station suffixes like "Berlin-Tempelhof")
+    const baseName = city.name.split('-')[0].split(',')[0].trim();
+    const cacheKey = baseName + '_' + condition;
+
+    if (imageCache[cacheKey]) {
+      bgEl.style.backgroundImage = 'url(' + imageCache[cacheKey] + ')';
+      bgEl.classList.add('loaded');
+      return;
+    }
+
+    fetch('/api/city-image?city=' + encodeURIComponent(baseName) + '&condition=' + condition, { headers: AUTH_HEADERS })
+      .then(r => r.json())
+      .then(data => {
+        if (!data.url) return;
+        const img = new Image();
+        img.onload = () => {
+          imageCache[cacheKey] = img.src;
+          bgEl.style.backgroundImage = 'url(' + img.src + ')';
+          bgEl.classList.add('loaded');
+        };
+        img.src = data.url;
+      })
+      .catch(() => {});
   }
 
   function detailCard(ic, val, label) {
@@ -1861,21 +1975,11 @@
     radarMap.createPane('radar');
     radarMap.getPane('radar').style.zIndex = 400;
 
-    radarMap.createPane('labels');
-    radarMap.getPane('labels').style.zIndex = 500;
-
-    // Basemap (dimmed via CSS filter on .leaflet-basemap-pane)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
+    // OpenStreetMap base (green/natural, dimmed via CSS filter)
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 18,
-      subdomains: 'abcd',
       pane: 'basemap',
-    }).addTo(radarMap);
-
-    // Labels on top of everything
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
-      maxZoom: 18,
-      subdomains: 'abcd',
-      pane: 'labels',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
     }).addTo(radarMap);
 
     // Zoom control bottom-right
@@ -1883,7 +1987,7 @@
 
     // Attribution
     L.control.attribution({ position: 'bottomleft', prefix: false })
-      .addAttribution('<a href="https://carto.com/">CARTO</a> | <a href="https://www.rainviewer.com/">RainViewer</a>')
+      .addAttribution('<a href="https://www.openstreetmap.org/copyright">OSM</a> | <a href="https://www.rainviewer.com/">RainViewer</a>')
       .addTo(radarMap);
 
     // City marker
@@ -1917,32 +2021,10 @@
 
       radarFrames = [];
       for (const f of past) {
-        radarFrames.push({ time: f.time, url: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'past', wms: false });
+        radarFrames.push({ time: f.time, url: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'past' });
       }
       for (const f of nowcast) {
-        radarFrames.push({ time: f.time, url: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'forecast', wms: false });
-      }
-
-      // If no nowcast from RainViewer, add DWD RADVOR forecast (2h, 15-min steps)
-      if (nowcast.length === 0 && past.length > 0) {
-        const lastPastTime = past[past.length - 1].time;
-        for (let m = 15; m <= 120; m += 15) {
-          const t = lastPastTime + m * 60;
-          const iso = new Date(t * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
-          radarFrames.push({
-            time: t,
-            url: 'https://maps.dwd.de/geoserver/dwd/wms',
-            wmsParams: {
-              layers: 'dwd:RV-Produkt',
-              format: 'image/png',
-              transparent: true,
-              version: '1.3.0',
-              time: iso,
-            },
-            type: 'forecast',
-            wms: true,
-          });
-        }
+        radarFrames.push({ time: f.time, url: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'forecast' });
       }
 
       const pastCount = past.length;
@@ -1960,18 +2042,10 @@
         // Preload ALL layers (hidden) so first playback doesn't flicker
         radarLayers = {};
         radarFrames.forEach((frame, i) => {
-          if (frame.wms) {
-            radarLayers[i] = L.tileLayer.wms(frame.url, {
-              ...frame.wmsParams,
-              opacity: 0,
-              pane: 'radar',
-            });
-          } else {
-            radarLayers[i] = L.tileLayer(frame.url, {
-              opacity: 0,
-              pane: 'radar',
-            });
-          }
+          radarLayers[i] = L.tileLayer(frame.url, {
+            opacity: 0,
+            pane: 'radar',
+          });
           radarLayers[i].addTo(radarMap);
         });
 
