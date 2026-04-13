@@ -84,7 +84,7 @@
 
     .search-input {
       width: 100%;
-      padding: 0.75rem 1rem 0.75rem 2.5rem;
+      padding: 0.75rem 2.25rem 0.75rem 2.5rem;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: var(--bg-surface);
@@ -127,6 +127,49 @@
     }
 
     .search-results.open { display: block; }
+
+    .search-clear {
+      position: absolute;
+      right: 0.5rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: color 0.15s, background 0.15s;
+      padding: 0;
+      z-index: 2;
+    }
+
+    .search-clear:hover { color: var(--text); background: rgba(148, 163, 184, 0.15); }
+    .search-clear.visible { display: flex; }
+
+    .search-section-label {
+      padding: 0.5rem 1rem 0.25rem;
+      font-size: 0.6875rem;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .search-result-item.recent {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .search-result-item.recent .recent-icon {
+      color: var(--text-dim);
+      flex-shrink: 0;
+    }
 
     .search-result-item {
       padding: 0.75rem 1rem;
@@ -768,6 +811,11 @@
         <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
       </svg>
       <input class="search-input" id="search" type="text" placeholder="Stadt suchen..." autocomplete="off" spellcheck="false">
+      <button class="search-clear" id="search-clear" type="button" aria-label="Suche leeren">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
       <div class="search-results" id="search-results"></div>
     </div>
     <div class="tab-bar">
@@ -969,50 +1017,162 @@
     });
   });
 
+  // ── Recent cities ─────────────────────────────────────
+  const MAX_RECENT = 5;
+  const searchClear = $('search-clear');
+
+  function getRecentCities() {
+    try {
+      return JSON.parse(localStorage.getItem('weather_recent') || '[]');
+    } catch(e) { return []; }
+  }
+
+  function addRecentCity(city) {
+    let recents = getRecentCities();
+    // Remove duplicate (same lat/lon)
+    recents = recents.filter(r => !(r.lat === city.lat && r.lon === city.lon));
+    recents.unshift(city);
+    if (recents.length > MAX_RECENT) recents = recents.slice(0, MAX_RECENT);
+    localStorage.setItem('weather_recent', JSON.stringify(recents));
+  }
+
+  function updateClearBtn() {
+    if (searchInput.value.length > 0) {
+      searchClear.classList.add('visible');
+    } else {
+      searchClear.classList.remove('visible');
+    }
+  }
+
   // ── Search ────────────────────────────────────────────
   searchInput.addEventListener('input', function() {
     clearTimeout(searchTimeout);
+    updateClearBtn();
     const q = this.value.trim();
-    if (q.length < 2) { searchResults.classList.remove('open'); return; }
+    if (q.length < 2) {
+      if (q.length === 0) {
+        showRecentCities();
+      } else {
+        searchResults.classList.remove('open');
+      }
+      return;
+    }
     searchTimeout = setTimeout(() => fetchGeocode(q), 250);
   });
 
   searchInput.addEventListener('focus', function() {
-    if (searchResults.children.length && this.value.trim().length >= 2)
+    const q = this.value.trim();
+    if (q.length < 2) {
+      showRecentCities();
+    } else if (searchResults.children.length) {
       searchResults.classList.add('open');
+    }
+  });
+
+  searchClear.addEventListener('click', function() {
+    searchInput.value = '';
+    updateClearBtn();
+    searchResults.classList.remove('open');
+    searchInput.focus();
   });
 
   document.addEventListener('click', (e) => {
     if (!e.target.closest('.search-wrap')) searchResults.classList.remove('open');
   });
 
+  function showRecentCities() {
+    const recents = getRecentCities();
+    searchResults.innerHTML = '';
+    if (!recents.length) { searchResults.classList.remove('open'); return; }
+    const label = document.createElement('div');
+    label.className = 'search-section-label';
+    label.textContent = 'Zuletzt gesucht';
+    searchResults.appendChild(label);
+    for (const r of recents) {
+      searchResults.appendChild(createRecentItem(r));
+    }
+    searchResults.classList.add('open');
+  }
+
+  function createRecentItem(city) {
+    const div = document.createElement('div');
+    div.className = 'search-result-item recent';
+    div.innerHTML =
+      '<svg class="recent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
+      '<div><div class="search-result-name">' + esc(city.name) + '</div>' +
+      '<div class="search-result-region">' + esc([city.admin1, city.country].filter(Boolean).join(', ')) + '</div></div>';
+    div.addEventListener('click', () => selectCity(city));
+    return div;
+  }
+
   async function fetchGeocode(q) {
     try {
       const r = await fetch('/api/geocode?q=' + encodeURIComponent(q), { headers: AUTH_HEADERS });
       const data = await r.json();
-      renderSearch(data);
+      renderSearch(data, q);
     } catch(e) { console.error(e); }
   }
 
-  function renderSearch(results) {
+  function renderSearch(results, query) {
     searchResults.innerHTML = '';
-    if (!results.length) { searchResults.classList.remove('open'); return; }
-    for (const r of results) {
-      const div = document.createElement('div');
-      div.className = 'search-result-item';
-      div.innerHTML = '<div class="search-result-name">' + esc(r.name) + '</div>' +
-        '<div class="search-result-region">' + esc([r.admin1, r.country].filter(Boolean).join(', ')) + '</div>';
-      div.addEventListener('click', () => selectCity(r));
-      searchResults.appendChild(div);
+
+    // Filter recent cities matching the query and show on top
+    const qLower = (query || '').toLowerCase();
+    const recents = getRecentCities();
+    const matchingRecents = qLower
+      ? recents.filter(r => {
+          const haystack = [r.name, r.admin1, r.country].filter(Boolean).join(' ').toLowerCase();
+          return haystack.includes(qLower);
+        })
+      : [];
+
+    // Deduplicate: remove API results that match a recent city (same lat/lon)
+    const filteredResults = results.filter(res =>
+      !matchingRecents.some(rc => rc.lat === res.lat && rc.lon === res.lon)
+    );
+
+    if (!matchingRecents.length && !filteredResults.length) {
+      searchResults.classList.remove('open');
+      return;
     }
+
+    if (matchingRecents.length) {
+      const label = document.createElement('div');
+      label.className = 'search-section-label';
+      label.textContent = 'Zuletzt gesucht';
+      searchResults.appendChild(label);
+      for (const r of matchingRecents) {
+        searchResults.appendChild(createRecentItem(r));
+      }
+    }
+
+    if (filteredResults.length) {
+      if (matchingRecents.length) {
+        const label = document.createElement('div');
+        label.className = 'search-section-label';
+        label.textContent = 'Suchergebnisse';
+        searchResults.appendChild(label);
+      }
+      for (const r of filteredResults) {
+        const div = document.createElement('div');
+        div.className = 'search-result-item';
+        div.innerHTML = '<div class="search-result-name">' + esc(r.name) + '</div>' +
+          '<div class="search-result-region">' + esc([r.admin1, r.country].filter(Boolean).join(', ')) + '</div>';
+        div.addEventListener('click', () => selectCity(r));
+        searchResults.appendChild(div);
+      }
+    }
+
     searchResults.classList.add('open');
   }
 
   function selectCity(city) {
     currentCity = city;
-    searchInput.value = city.name;
+    searchInput.value = '';
+    updateClearBtn();
     searchResults.classList.remove('open');
     searchInput.blur();
+    addRecentCity(city);
     localStorage.setItem('weather_city', JSON.stringify(city));
     fetchWeather(city);
 
@@ -1636,10 +1796,24 @@
     try {
       const city = JSON.parse(saved);
       currentCity = city;
-      searchInput.value = city.name;
       fetchWeather(city);
     } catch(e) {}
   }
+
+  // ── Resume from background ────────────────────────────
+  let lastVisible = Date.now();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && currentCity) {
+      const elapsed = Date.now() - lastVisible;
+      // Refresh if app was in background for 5+ minutes
+      if (elapsed > 5 * 60 * 1000) {
+        fetchWeather(currentCity);
+      }
+    }
+    if (document.visibilityState === 'hidden') {
+      lastVisible = Date.now();
+    }
+  });
 
   // ── PWA Service Worker ────────────────────────────────
   if ('serviceWorker' in navigator) {
