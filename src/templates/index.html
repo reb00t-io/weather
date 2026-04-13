@@ -408,10 +408,17 @@
     .current-detail-label { font-size: 0.625rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.5px; }
 
     .current-feels {
-      font-size: 0.8125rem;
-      opacity: 0.75;
+      font-size: 1.125rem;
+      font-weight: 300;
+      opacity: 0.8;
+      margin-top: 0.125rem;
       position: relative;
       z-index: 1;
+    }
+
+    .current-feels-val {
+      font-weight: 600;
+      font-size: 1.25rem;
     }
 
     /* ── Warnings ─────────────────────────────────────────── */
@@ -969,12 +976,12 @@
           <div class="current-details" id="current-details"></div>
         </div>
 
-        <div class="aqi-card fade-in" id="aqi-card" style="display:none"></div>
-
         <div class="section-label fade-in fade-in-delay-1">Heute stundenweise</div>
         <div class="hourly-card fade-in fade-in-delay-1">
           <div class="hourly-outer" id="hourly-outer"></div>
         </div>
+
+        <div class="aqi-card fade-in fade-in-delay-1" id="aqi-card" style="display:none"></div>
 
         <div class="section-label fade-in fade-in-delay-2">14-Tage-Vorhersage</div>
         <div class="temp-chart-card fade-in fade-in-delay-2" id="temp-chart-card">
@@ -1339,7 +1346,7 @@
     const feelsTemp = ch.apparent_temp;
     const feelsEl = $('current-feels');
     if (feelsTemp != null && Math.abs(feelsTemp - c.temp) >= 1.5) {
-      feelsEl.textContent = 'Gef\u00FChlt ' + Math.round(feelsTemp) + '\u00B0';
+      feelsEl.innerHTML = '<span class="current-feels-val">' + Math.round(feelsTemp) + '\u00B0</span> gef\u00FChlt';
       feelsEl.style.display = '';
     } else {
       feelsEl.style.display = 'none';
@@ -1443,7 +1450,7 @@
     if (!n) return;
 
     const colW = 56;
-    const curveH = 60;
+    const curveH = 80;
     const sunBarH = 8;
     const sunGap = 4;
     const chartH = curveH + sunGap + sunBarH;
@@ -1557,7 +1564,7 @@
     // Feels-like
     const feelsEl = $('current-feels');
     if (h.apparent_temp != null && Math.abs(h.apparent_temp - h.temp) >= 1.5) {
-      feelsEl.textContent = 'Gef\u00FChlt ' + Math.round(h.apparent_temp) + '\u00B0';
+      feelsEl.innerHTML = '<span class="current-feels-val">' + Math.round(h.apparent_temp) + '\u00B0</span> gef\u00FChlt';
       feelsEl.style.display = '';
     } else {
       feelsEl.style.display = 'none';
@@ -1606,12 +1613,12 @@
     const n = daily.length;
     if (!n) { el.innerHTML = ''; return; }
 
-    const colW = 68;
-    const padL = 20, padR = 20;
+    const colW = 36;
+    const padL = 12, padR = 12;
     const W = padL + n * colW + padR;
     const topArea = 36;   // day labels
-    const chartH = 140;   // main chart area
-    const botRowH = 18;   // each bottom row
+    const chartH = 170;   // main chart area
+    const botRowH = 14;   // each bottom row
     const botGap = 3;
     const H = topArea + chartH + botGap + botRowH + botGap + botRowH + 4;
 
@@ -1654,7 +1661,7 @@
       const cx = padL + i * colW + colW / 2;
       const isWe = dow === 0 || dow === 6;
       const label = i === 0 ? 'Heute' : DAYS[dow];
-      svg += '<text x="' + cx + '" y="22" text-anchor="middle" fill="' + (isWe ? '#f1f5f9' : '#94a3b8') + '" font-size="11" font-weight="' + (isWe ? '700' : '600') + '" font-family="inherit">' + label + '</text>';
+      svg += '<text x="' + cx + '" y="20" text-anchor="middle" fill="' + (isWe ? '#f1f5f9' : '#94a3b8') + '" font-size="9" font-weight="' + (isWe ? '700' : '600') + '" font-family="inherit">' + label + '</text>';
     });
 
     // Points
@@ -1690,16 +1697,16 @@
     svg += '<path d="' + maxPath + '" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round"/>';
     svg += '<path d="' + minPath + '" fill="none" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>';
 
-    // Max dots + labels (smaller dots)
+    // Max dots + labels
     maxPts.forEach(p => {
-      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="3" fill="#f59e0b"/>';
-      svg += '<text x="' + p.x + '" y="' + (p.y - 9) + '" text-anchor="middle" fill="#f59e0b" font-size="11" font-weight="700" font-family="inherit">' + p.val + '</text>';
+      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="2.5" fill="#f59e0b"/>';
+      svg += '<text x="' + p.x + '" y="' + (p.y - 7) + '" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="700" font-family="inherit">' + p.val + '</text>';
     });
 
-    // Min dots + labels (smaller dots)
+    // Min dots + labels
     minPts.forEach(p => {
-      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="3" fill="#60a5fa"/>';
-      svg += '<text x="' + p.x + '" y="' + (p.y + 15) + '" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700" font-family="inherit">' + p.val + '</text>';
+      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="2.5" fill="#60a5fa"/>';
+      svg += '<text x="' + p.x + '" y="' + (p.y + 13) + '" text-anchor="middle" fill="#60a5fa" font-size="9" font-weight="700" font-family="inherit">' + p.val + '</text>';
     });
 
     // ── Bottom bars: Row 1 = Sunshine, Row 2 = Rain ──
@@ -1724,7 +1731,7 @@
       svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="' + sunBarColor(sunFrac) + '"/>';
       const sunLabel = sunH >= 1 ? Math.round(sunH) + 'h' : (sunH > 0 ? '<1h' : '');
       if (sunLabel) {
-        svg += '<text x="' + (x + w / 2) + '" y="' + (sunY + botRowH / 2 + 4) + '" text-anchor="middle" fill="#555" font-size="9" font-weight="600" font-family="inherit">' + sunLabel + '</text>';
+        svg += '<text x="' + (x + w / 2) + '" y="' + (sunY + botRowH / 2 + 3) + '" text-anchor="middle" fill="#555" font-size="7" font-weight="600" font-family="inherit">' + sunLabel + '</text>';
       }
 
       // Rain bar (blue intensity by probability)
@@ -1733,7 +1740,7 @@
       const rainAlpha = hasRain ? (0.15 + (prob / 100) * 0.5) : 0.06;
       svg += '<rect x="' + x + '" y="' + rainY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="rgba(96,165,250,' + rainAlpha.toFixed(2) + ')"/>';
       if (hasRain) {
-        svg += '<text x="' + (x + w / 2) + '" y="' + (rainY + botRowH / 2 + 4) + '" text-anchor="middle" font-size="11">\uD83D\uDCA7</text>';
+        svg += '<text x="' + (x + w / 2) + '" y="' + (rainY + botRowH / 2 + 3) + '" text-anchor="middle" font-size="9">\uD83D\uDCA7</text>';
       }
     });
 
