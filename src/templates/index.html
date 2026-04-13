@@ -1220,15 +1220,17 @@
       detailCard('\u2601\uFE0F', (h.cloud ?? '--') + '%', 'Wolken');
   }
 
-  // ── Sun bar color: interpolate between cloud gray and sunny yellow ──
-  const SUN_COLOR = [255, 255, 50];
-  const CLOUD_COLOR = [205, 205, 205];
+  // ── Sun bar: 3 discrete colors ──
+  const SUN_RGB = 'rgb(255,250,150)';
+  const MIXED_RGB = 'rgb(255,250,205)';
+  const CLOUD_RGB = 'rgb(205,205,205)';
 
+  // sun = 0..1 (fraction of daylight hours with sun)
+  // >= 0.5 -> sunny, <= ~0.07 (1hr/14hr) -> clouds, otherwise mixed
   function sunBarColor(sun) {
-    const r = Math.round(CLOUD_COLOR[0] + sun * (SUN_COLOR[0] - CLOUD_COLOR[0]));
-    const g = Math.round(CLOUD_COLOR[1] + sun * (SUN_COLOR[1] - CLOUD_COLOR[1]));
-    const b = Math.round(CLOUD_COLOR[2] + sun * (SUN_COLOR[2] - CLOUD_COLOR[2]));
-    return 'rgb(' + r + ',' + g + ',' + b + ')';
+    if (sun >= 0.5) return SUN_RGB;
+    if (sun <= 0.07) return CLOUD_RGB;
+    return MIXED_RGB;
   }
 
   function sunLevelFromCloud(cloud) {
