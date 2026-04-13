@@ -193,18 +193,22 @@ echo "ok"
 # ---- public smoke check --------------------------------------------------
 deploy_step="smoke-check"
 printf "==> checking public endpoint (%s)..." "$PUBLIC_URL"
-if ! body=$(curl -sfL --max-time 10 "$PUBLIC_URL"); then
+smoke_file=$(mktemp)
+if ! curl -sfL --max-time 10 "$PUBLIC_URL" > "$smoke_file"; then
   echo "FAIL"
   echo "    could not reach $PUBLIC_URL"
+  rm -f "$smoke_file"
   exit 1
 fi
 
-if ! echo "$body" | grep -q "Wetter"; then
+if ! grep -q "Wetter" "$smoke_file"; then
   echo "FAIL"
   echo "    $PUBLIC_URL response did not look right"
-  echo "    $body" | head -20
+  head -20 "$smoke_file"
+  rm -f "$smoke_file"
   exit 1
 fi
+rm -f "$smoke_file"
 echo "ok"
 
 ./scripts/get_logs.sh
