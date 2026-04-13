@@ -1220,13 +1220,14 @@
       detailCard('\u2601\uFE0F', (h.cloud ?? '--') + '%', 'Wolken');
   }
 
-  // ── Sun bar color: blend yellow (sunny) to warm light gray (cloudy) ──
-  // sun = 0..1 (0 = full clouds, 1 = clear sky)
+  // ── Sun bar color: interpolate between cloud gray and sunny yellow ──
+  const SUN_COLOR = [255, 255, 50];
+  const CLOUD_COLOR = [205, 205, 205];
+
   function sunBarColor(sun) {
-    // Sunny: rgb(245, 205, 50)  Cloudy/no sun: rgb(220, 215, 195)
-    const r = Math.round(220 + sun * (245 - 220));
-    const g = Math.round(215 + sun * (205 - 215));
-    const b = Math.round(195 + sun * (50 - 195));
+    const r = Math.round(CLOUD_COLOR[0] + sun * (SUN_COLOR[0] - CLOUD_COLOR[0]));
+    const g = Math.round(CLOUD_COLOR[1] + sun * (SUN_COLOR[1] - CLOUD_COLOR[1]));
+    const b = Math.round(CLOUD_COLOR[2] + sun * (SUN_COLOR[2] - CLOUD_COLOR[2]));
     return 'rgb(' + r + ',' + g + ',' + b + ')';
   }
 
