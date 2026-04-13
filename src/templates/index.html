@@ -1494,10 +1494,17 @@
 
     window._radarMap = radarMap;
 
-    // Dark base map
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    // Base map (dark-tinted voyager for better radar contrast)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_nolabels/{z}/{x}/{y}{r}.png', {
       maxZoom: 18,
       subdomains: 'abcd',
+    }).addTo(radarMap);
+    // Labels on top of radar
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}{r}.png', {
+      maxZoom: 18,
+      subdomains: 'abcd',
+      zIndex: 20,
+      pane: 'overlayPane',
     }).addTo(radarMap);
 
     // Zoom control bottom-right
@@ -1559,17 +1566,28 @@
     }
   }
 
+  // Keep all radar tile layers cached to avoid flicker
+  let radarLayers = {};
+
   function showRadarFrame(idx) {
     const frame = radarFrames[idx];
     if (!frame) return;
 
-    if (radarLayer) radarMap.removeLayer(radarLayer);
+    // Create layer if not cached
+    if (!radarLayers[idx]) {
+      radarLayers[idx] = L.tileLayer(frame.path, {
+        opacity: 0,
+        zIndex: 10,
+      });
+      radarLayers[idx].addTo(radarMap);
+    }
 
-    radarLayer = L.tileLayer(frame.path, {
-      opacity: 0.75,
-      zIndex: 10,
-    });
-    radarLayer.addTo(radarMap);
+    // Show this frame, hide previous
+    if (radarLayer && radarLayer !== radarLayers[idx]) {
+      radarLayer.setOpacity(0);
+    }
+    radarLayers[idx].setOpacity(0.85);
+    radarLayer = radarLayers[idx];
 
     // Update time display
     const d = new Date(frame.time * 1000);
@@ -1578,16 +1596,32 @@
     $('radar-slider').value = idx;
   }
 
+  function stopRadarPlay() {
+    radarPlaying = false;
+    clearInterval(radarTimer);
+    $('play-icon').style.display = 'block';
+    $('pause-icon').style.display = 'none';
+  }
+
   function toggleRadarPlay() {
     radarPlaying = !radarPlaying;
     $('play-icon').style.display = radarPlaying ? 'none' : 'block';
     $('pause-icon').style.display = radarPlaying ? 'block' : 'none';
 
     if (radarPlaying) {
-      radarTimer = setInterval(() => {
-        radarIdx = (radarIdx + 1) % radarFrames.length;
+      // If at end, restart from beginning
+      if (radarIdx >= radarFrames.length - 1) {
+        radarIdx = 0;
         showRadarFrame(radarIdx);
-      }, 600);
+      }
+      radarTimer = setInterval(() => {
+        radarIdx++;
+        if (radarIdx >= radarFrames.length) {
+          stopRadarPlay();
+          return;
+        }
+        showRadarFrame(radarIdx);
+      }, 500);
     } else {
       clearInterval(radarTimer);
     }
