@@ -1168,7 +1168,7 @@
         const sl = sunLevelFromCloud(h.cloud);
         svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + sunBarH + '" rx="3" fill="' + sunBarColor(sl) + '"/>';
       } else {
-        svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + sunBarH + '" rx="3" fill="rgba(30,41,59,0.6)"/>';
+        svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + sunBarH + '" rx="3" fill="rgb(55,65,81)"/>';
       }
     });
 
@@ -1220,13 +1220,13 @@
       detailCard('\u2601\uFE0F', (h.cloud ?? '--') + '%', 'Wolken');
   }
 
-  // ── Sun bar color: blend yellow (sunny) to gray (cloudy) ──
+  // ── Sun bar color: blend yellow (sunny) to warm light gray (cloudy) ──
   // sun = 0..1 (0 = full clouds, 1 = clear sky)
   function sunBarColor(sun) {
-    // Bright yellow: rgb(250, 204, 21)  Gray: rgb(120, 130, 140)
-    const r = Math.round(120 + sun * (250 - 120));
-    const g = Math.round(130 + sun * (204 - 130));
-    const b = Math.round(140 + sun * (21 - 140));
+    // Sunny: rgb(250, 204, 30)  Cloudy: rgb(180, 175, 160)
+    const r = Math.round(180 + sun * (250 - 180));
+    const g = Math.round(175 + sun * (204 - 175));
+    const b = Math.round(160 + sun * (30 - 160));
     return 'rgb(' + r + ',' + g + ',' + b + ')';
   }
 
