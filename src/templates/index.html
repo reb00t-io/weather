@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#0f172a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -39,29 +39,31 @@
       --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
 
-    html {
+    html, body {
       height: 100%;
       background: var(--bg);
       color: var(--text);
+      overflow: hidden;
+      overscroll-behavior: none;
     }
 
     body {
-      min-height: 100%;
       font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
-      overflow-x: hidden;
-      background: var(--bg);
     }
 
     /* ── App Shell ───────────────────────────────────────── */
     .app {
       max-width: 520px;
       margin: 0 auto;
-      min-height: 100vh;
+      height: 100%;
       display: flex;
       flex-direction: column;
       position: relative;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
     }
 
     /* ── Header ──────────────────────────────────────────── */
@@ -816,7 +818,8 @@
           <div class="temp-chart-legend">
             <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> Max &deg;C</div>
             <div class="legend-item"><div class="legend-dot" style="background:#60a5fa"></div> Min &deg;C</div>
-            <div class="legend-item"><span style="color:#60a5fa">\uD83D\uDCA7</span> Regen</div>
+            <div class="legend-item">\u2600\uFE0F Sonne</div>
+            <div class="legend-item">\uD83D\uDCA7 Regen</div>
           </div>
         </div>
         <div class="daily-card fade-in fade-in-delay-2" id="daily-card"></div>
@@ -1098,7 +1101,10 @@
     if (!n) return;
 
     const colW = 56;
-    const chartH = 64;
+    const curveH = 64;
+    const sunRowH = 10;
+    const sunGap = 4;
+    const chartH = curveH + sunGap + sunRowH;
     const padTop = 18, padBot = 6;
     const totalW = n * colW;
 
@@ -1112,7 +1118,7 @@
 
     function yPos(temp) {
       const ratio = (temp - tMin) / tRange;
-      return padTop + (chartH - padTop - padBot) * (1 - ratio);
+      return padTop + (curveH - padTop - padBot) * (1 - ratio);
     }
 
     // Build SVG chart
@@ -1142,7 +1148,7 @@
         ' ' + (p2.x - (p3.x - p1.x) * t) + ',' + (p2.y - (p3.y - p1.y) * t) +
         ' ' + p2.x + ',' + p2.y;
     }
-    svg += '<path d="' + areaPath + ' V' + chartH + ' H' + pts[0].x + ' Z" fill="url(#hg)"/>';
+    svg += '<path d="' + areaPath + ' V' + curveH + ' H' + pts[0].x + ' Z" fill="url(#hg)"/>';
 
     // Line
     svg += '<path d="' + areaPath + '" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/>';
@@ -1151,6 +1157,16 @@
     pts.forEach(p => {
       svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="3" fill="#60a5fa"/>';
       svg += '<text x="' + p.x + '" y="' + (p.y - 7) + '" text-anchor="middle" fill="#f1f5f9" font-size="10" font-weight="700" font-family="inherit">' + p.val + '\u00B0</text>';
+    });
+
+    // Sun level bars at bottom of SVG
+    const sunBarY = curveH + sunGap;
+    hourlyItems.forEach((h, i) => {
+      const x = i * colW + 4;
+      const w = colW - 8;
+      const sl = h.is_day ? sunLevel(h.icon) : 0;
+      const alpha = 0.1 + sl * 0.7;
+      svg += '<rect x="' + x + '" y="' + sunBarY + '" width="' + w + '" height="' + sunRowH + '" rx="3" fill="rgba(250,204,21,' + (sl > 0 ? alpha.toFixed(2) : '0.04') + ')"/>';
     });
 
     svg += '</svg>';
@@ -1201,6 +1217,18 @@
       detailCard('\u2601\uFE0F', (h.cloud ?? '--') + '%', 'Wolken');
   }
 
+  // ── Sun level from icon name (0-1) ─────────────────────
+  function sunLevel(iconName) {
+    if (iconName === 'clear' || iconName === 'mostly-clear') return 1.0;
+    if (iconName === 'partly-cloudy') return 0.6;
+    if (iconName === 'overcast') return 0.15;
+    if (iconName === 'fog') return 0.1;
+    if (iconName.includes('thunder')) return 0.05;
+    if (iconName.includes('heavy') || iconName.includes('snow')) return 0.05;
+    if (iconName.includes('rain') || iconName.includes('drizzle') || iconName.includes('shower')) return 0.2;
+    return 0.3;
+  }
+
   // ── Temperature Chart (SVG) ────────────────────────────
   function renderTempChart(daily) {
     const el = $('temp-chart-scroll');
@@ -1212,17 +1240,18 @@
     const W = padL + n * colW + padR;
     const topArea = 36;   // day labels
     const chartH = 140;   // main chart area
-    const bottomH = 36;   // precip bars
-    const H = topArea + chartH + bottomH;
+    const botRowH = 18;   // each bottom row
+    const botGap = 3;
+    const H = topArea + chartH + botGap + botRowH + botGap + botRowH + 4;
 
-    // Temp range for scaling
+    // Temp range
     let allMin = Infinity, allMax = -Infinity;
     for (const d of daily) {
       if (d.temp_min < allMin) allMin = d.temp_min;
       if (d.temp_max > allMax) allMax = d.temp_max;
     }
     const tempRange = (allMax - allMin) || 1;
-    const tempPad = 16; // px padding top/bottom within chart area
+    const tempPad = 16;
 
     function yPos(temp) {
       const ratio = (temp - allMin) / tempRange;
@@ -1231,13 +1260,13 @@
 
     let svg = '<svg class="temp-chart-svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
 
-    // Background columns (weekend days highlighted)
+    // Weekend backgrounds
     daily.forEach((d, i) => {
       const date = new Date(d.date + 'T00:00:00');
       const dow = date.getDay();
       const x = padL + i * colW;
       if (dow === 0 || dow === 6) {
-        svg += '<rect x="' + x + '" y="0" width="' + colW + '" height="' + (topArea + chartH) + '" fill="rgba(148,163,184,0.06)" rx="0"/>';
+        svg += '<rect x="' + x + '" y="0" width="' + colW + '" height="' + (topArea + chartH) + '" fill="rgba(148,163,184,0.06)"/>';
       }
     });
 
@@ -1251,7 +1280,7 @@
       svg += '<text x="' + cx + '" y="22" text-anchor="middle" fill="' + (isWe ? '#f1f5f9' : '#94a3b8') + '" font-size="11" font-weight="' + (isWe ? '700' : '600') + '" font-family="inherit">' + label + '</text>';
     });
 
-    // Build points
+    // Points
     const maxPts = [], minPts = [];
     daily.forEach((d, i) => {
       const cx = padL + i * colW + colW / 2;
@@ -1259,28 +1288,22 @@
       minPts.push({ x: cx, y: yPos(d.temp_min), val: Math.round(d.temp_min) });
     });
 
-    // Smooth curve helper (catmull-rom to bezier)
     function smoothPath(pts) {
       if (pts.length < 2) return '';
       let path = 'M' + pts[0].x + ',' + pts[0].y;
       for (let i = 0; i < pts.length - 1; i++) {
-        const p0 = pts[Math.max(0, i - 1)];
-        const p1 = pts[i];
-        const p2 = pts[i + 1];
+        const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1];
         const p3 = pts[Math.min(pts.length - 1, i + 2)];
-        const tension = 0.3;
-        const cp1x = p1.x + (p2.x - p0.x) * tension;
-        const cp1y = p1.y + (p2.y - p0.y) * tension;
-        const cp2x = p2.x - (p3.x - p1.x) * tension;
-        const cp2y = p2.y - (p3.y - p1.y) * tension;
-        path += ' C' + cp1x + ',' + cp1y + ' ' + cp2x + ',' + cp2y + ' ' + p2.x + ',' + p2.y;
+        const t = 0.3;
+        path += ' C' + (p1.x + (p2.x - p0.x) * t) + ',' + (p1.y + (p2.y - p0.y) * t) +
+          ' ' + (p2.x - (p3.x - p1.x) * t) + ',' + (p2.y - (p3.y - p1.y) * t) +
+          ' ' + p2.x + ',' + p2.y;
       }
       return path;
     }
 
-    // Max line (orange)
+    // Lines
     svg += '<path d="' + smoothPath(maxPts) + '" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>';
-    // Min line (blue)
     svg += '<path d="' + smoothPath(minPts) + '" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/>';
 
     // Max dots + labels
@@ -1295,20 +1318,30 @@
       svg += '<text x="' + p.x + '" y="' + (p.y + 16) + '" text-anchor="middle" fill="#60a5fa" font-size="11" font-weight="700" font-family="inherit">' + p.val + '</text>';
     });
 
-    // Precipitation bar at bottom
-    const barY = topArea + chartH + 4;
-    const barH = 24;
+    // ── Bottom bars: Row 1 = Sunshine, Row 2 = Rain ──
+    const sunY = topArea + chartH + botGap;
+    const rainY = sunY + botRowH + botGap;
+    const barPad = 3;
+
     daily.forEach((d, i) => {
-      const x = padL + i * colW + 4;
-      const w = colW - 8;
-      // Bar color intensity by precip probability
+      const x = padL + i * colW + barPad;
+      const w = colW - barPad * 2;
+      const sl = sunLevel(d.icon);
+
+      // Sunshine bar (yellow, opacity = sun level)
+      const sunAlpha = 0.15 + sl * 0.65;
+      svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="rgba(250,204,21,' + sunAlpha.toFixed(2) + ')"/>';
+      if (sl > 0.4) {
+        svg += '<text x="' + (x + w / 2) + '" y="' + (sunY + botRowH / 2 + 4) + '" text-anchor="middle" font-size="11">\u2600\uFE0F</text>';
+      }
+
+      // Rain bar (blue, opacity = rain probability)
       const prob = d.precip_prob || 0;
       const hasRain = prob > 20 || (d.precip_sum && d.precip_sum > 0.5);
-      const alpha = Math.min(0.15 + (prob / 100) * 0.5, 0.65);
-      svg += '<rect x="' + x + '" y="' + barY + '" width="' + w + '" height="' + barH + '" rx="4" fill="rgba(96,165,250,' + (hasRain ? alpha : 0.06) + ')"/>';
+      const rainAlpha = hasRain ? (0.15 + (prob / 100) * 0.5) : 0.06;
+      svg += '<rect x="' + x + '" y="' + rainY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="rgba(96,165,250,' + rainAlpha.toFixed(2) + ')"/>';
       if (hasRain) {
-        // Raindrop icon
-        svg += '<text x="' + (x + w / 2) + '" y="' + (barY + barH / 2 + 4) + '" text-anchor="middle" font-size="12">\uD83D\uDCA7</text>';
+        svg += '<text x="' + (x + w / 2) + '" y="' + (rainY + botRowH / 2 + 4) + '" text-anchor="middle" font-size="11">\uD83D\uDCA7</text>';
       }
     });
 
