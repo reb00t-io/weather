@@ -62,9 +62,9 @@ notify_deploy_result() {
 
   local subject
   if [ "$status" = "succeeded" ]; then
-    subject="[ok] ${app_link}: deployed ${commit_link}"
+    subject="✅ ${app_link}: deployed ${commit_link}"
   else
-    subject="[FAIL] ${app_link}: deploy FAILED at \`${deploy_step}\` (${commit_link})"
+    subject="❌ ${app_link}: deploy FAILED at \`${deploy_step}\` (${commit_link})"
   fi
   "${SCRIPT_DIR}/notify.sh" "$subject" || true
 }
