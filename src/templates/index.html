@@ -1101,10 +1101,7 @@
     if (!n) return;
 
     const colW = 56;
-    const curveH = 64;
-    const sunRowH = 10;
-    const sunGap = 4;
-    const chartH = curveH + sunGap + sunRowH;
+    const chartH = 64;
     const padTop = 18, padBot = 6;
     const totalW = n * colW;
 
@@ -1118,7 +1115,7 @@
 
     function yPos(temp) {
       const ratio = (temp - tMin) / tRange;
-      return padTop + (curveH - padTop - padBot) * (1 - ratio);
+      return padTop + (chartH - padTop - padBot) * (1 - ratio);
     }
 
     // Build SVG chart
@@ -1148,7 +1145,7 @@
         ' ' + (p2.x - (p3.x - p1.x) * t) + ',' + (p2.y - (p3.y - p1.y) * t) +
         ' ' + p2.x + ',' + p2.y;
     }
-    svg += '<path d="' + areaPath + ' V' + curveH + ' H' + pts[0].x + ' Z" fill="url(#hg)"/>';
+    svg += '<path d="' + areaPath + ' V' + chartH + ' H' + pts[0].x + ' Z" fill="url(#hg)"/>';
 
     // Line
     svg += '<path d="' + areaPath + '" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/>';
@@ -1157,16 +1154,6 @@
     pts.forEach(p => {
       svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="3" fill="#60a5fa"/>';
       svg += '<text x="' + p.x + '" y="' + (p.y - 7) + '" text-anchor="middle" fill="#f1f5f9" font-size="10" font-weight="700" font-family="inherit">' + p.val + '\u00B0</text>';
-    });
-
-    // Sun level bars at bottom of SVG
-    const sunBarY = curveH + sunGap;
-    hourlyItems.forEach((h, i) => {
-      const x = i * colW + 4;
-      const w = colW - 8;
-      const sl = h.is_day ? sunLevel(h.icon) : 0;
-      const alpha = 0.1 + sl * 0.7;
-      svg += '<rect x="' + x + '" y="' + sunBarY + '" width="' + w + '" height="' + sunRowH + '" rx="3" fill="rgba(250,204,21,' + (sl > 0 ? alpha.toFixed(2) : '0.04') + ')"/>';
     });
 
     svg += '</svg>';
