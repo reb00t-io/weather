@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Deploy script for bootstrap-template
-# This script handles building, saving, uploading, and starting the Docker container.
-# It also checks the public endpoint and prints diagnostics on failure.
+# Deploy script for weather app
+# Builds, uploads, and starts the Docker container on the remote host.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -13,10 +12,7 @@ REMOTE_USER="marko"
 IMAGE_NAME="weather"
 REMOTE="$REMOTE_USER@$REMOTE_HOST"
 
-# Persistent SSH multiplexed connection — all ssh/scp commands share one TCP
-# session. Force the control dir under /tmp: Unix domain sockets cap at ~104
-# bytes, and macOS's TMPDIR (/var/folders/...) plus the %C hash exceeds that
-# limit.
+# Persistent SSH multiplexed connection
 SSH_CONTROL_DIR=$(mktemp -d /tmp/deploy-ssh.XXXXXX)
 SSH_CONTROL_PATH="$SSH_CONTROL_DIR/s"
 SSH_OPTS=(-p "$REMOTE_PORT" -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=12 -o ControlMaster=auto -o ControlPath="$SSH_CONTROL_PATH" -o ControlPersist=300)
@@ -32,7 +28,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Retry wrapper: retry_cmd <max_attempts> <backoff_secs> <command...>
 retry_cmd() {
   local max=$1 backoff=$2; shift 2
   local attempt=1
@@ -49,12 +44,10 @@ retry_cmd() {
 deploy_step="init"
 
 notify_deploy_result() {
-  local status="$1"  # "succeeded" or "failed"
+  local status="$1"
   local short_sha
   short_sha=$(git rev-parse --short HEAD 2>/dev/null || echo "?")
 
-  # Derive the GitHub URL from `git remote get-url origin` so the commit
-  # link doesn't hardcode the repo. Handles both git@ and https:// remotes.
   local repo_url=""
   if remote=$(git remote get-url origin 2>/dev/null); then
     repo_url="${remote%.git}"
@@ -69,9 +62,9 @@ notify_deploy_result() {
 
   local subject
   if [ "$status" = "succeeded" ]; then
-    subject="✅ ${app_link}: deployed ${commit_link}"
+    subject="[ok] ${app_link}: deployed ${commit_link}"
   else
-    subject="❌ ${app_link}: deploy FAILED at \`${deploy_step}\` (${commit_link})"
+    subject="[FAIL] ${app_link}: deploy FAILED at \`${deploy_step}\` (${commit_link})"
   fi
   "${SCRIPT_DIR}/notify.sh" "$subject" || true
 }
@@ -79,10 +72,7 @@ notify_deploy_result() {
 # ---- required environment ------------------------------------------------
 : "${PORT:?PORT must be set}"
 : "${PUBLIC_URL:?PUBLIC_URL must be set}"
-: "${LLM_BASE_URL:?LLM_BASE_URL must be set}"
-: "${LLM_API_KEY:?LLM_API_KEY must be set}"
 : "${API_KEY:?API_KEY must be set}"
-: "${AUTH_PASSWORD:?AUTH_PASSWORD must be set}"
 
 print_remote_diagnostics() {
   echo "    remote diagnostics:"
@@ -120,8 +110,6 @@ rm /tmp/"${IMAGE_NAME}".tar.gz
 echo "ok"
 
 printf "==> loading image on remote..."
-# Bypass ControlMaster for docker load — the multiplexed socket established by
-# the preceding scp sometimes drops this long-running command on macOS.
 ssh -p "$REMOTE_PORT" -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=24 "$REMOTE" "
   docker load < /tmp/${IMAGE_NAME}.tar.gz
   rm /tmp/${IMAGE_NAME}.tar.gz
@@ -135,48 +123,21 @@ retry_cmd 3 2 ssh "${SSH_OPTS[@]}" "$REMOTE" "mkdir -p ~/${IMAGE_NAME}"
 retry_cmd 3 2 scp "${SCP_OPTS[@]}" docker-compose.yml "$REMOTE":~/"${IMAGE_NAME}"/docker-compose.yml
 echo "ok"
 
-# ---- ensure data dir on remote -------------------------------------------
-printf "==> ensuring remote data dir..."
-ssh "${SSH_OPTS[@]}" "$REMOTE" 'mkdir -p "$HOME/.bootstrap-template/data"' > /dev/null 2>&1
-echo "ok"
-
 # ---- write .env on remote ------------------------------------------------
 deploy_step="env-setup"
-# All values are written through `printf %q` so secrets with quotes / spaces /
-# special characters survive the heredoc. The .env file format docker-compose
-# reads is documented here: https://docs.docker.com/compose/environment-variables/env-file/
 printf "==> writing remote .env..."
-printf -v port_q '%q'           "$PORT"
-printf -v llm_base_url_q '%q'   "$LLM_BASE_URL"
-printf -v llm_api_key_q '%q'    "$LLM_API_KEY"
-printf -v api_key_q '%q'        "$API_KEY"
-printf -v auth_password_q '%q'  "$AUTH_PASSWORD"
-
-# Optional values — only written if they're non-empty in the local shell.
-extra_env=""
-for var in LLM_MODEL STREAM_PACE_SECONDS; do
-  if [[ -n "${!var:-}" ]]; then
-    printf -v val_q '%q' "${!var}"
-    extra_env+="${var}=${val_q}"$'\n'
-  fi
-done
+printf -v port_q '%q' "$PORT"
+printf -v api_key_q '%q' "$API_KEY"
 
 retry_cmd 3 2 ssh "${SSH_OPTS[@]}" "$REMOTE" 'bash -se' <<EOF
 cat > ~/${IMAGE_NAME}/.env <<'ENVEOF'
 PORT=$port_q
-LLM_BASE_URL=$llm_base_url_q
-LLM_API_KEY=$llm_api_key_q
 API_KEY=$api_key_q
-AUTH_MODE=password
-AUTH_PASSWORD=$auth_password_q
-${extra_env}ENVEOF
+ENVEOF
 EOF
 echo "ok"
 
 # ---- start services ------------------------------------------------------
-# Remove any stray container with the target name that isn't managed by the
-# current compose project (e.g. left over from an older `docker run`-based
-# deploy). docker compose up would otherwise fail with a name conflict.
 printf "==> removing stray container (if any)..."
 ssh "${SSH_OPTS[@]}" "$REMOTE" "
   if docker inspect ${IMAGE_NAME} >/dev/null 2>&1; then
@@ -214,7 +175,7 @@ WAIT_DEADLINE=$(( $(date +%s) + WAIT_TIMEOUT_SECONDS ))
 server_ready=false
 
 while (( $(date +%s) < WAIT_DEADLINE )); do
-  if ssh "${SSH_OPTS[@]}" "$REMOTE" "curl -sf --max-time 3 http://localhost:${PORT}/login > /dev/null" 2>/dev/null; then
+  if ssh "${SSH_OPTS[@]}" "$REMOTE" "curl -sf --max-time 3 http://localhost:${PORT}/ > /dev/null" 2>/dev/null; then
     server_ready=true
     break
   fi
@@ -238,10 +199,10 @@ if ! body=$(curl -sfL --max-time 10 "$PUBLIC_URL"); then
   exit 1
 fi
 
-if ! echo "$body" | grep -qE "hello|Sign in"; then
+if ! echo "$body" | grep -q "Wetter"; then
   echo "FAIL"
   echo "    $PUBLIC_URL response did not look right"
-  echo "    $body"
+  echo "    $body" | head -20
   exit 1
 fi
 echo "ok"

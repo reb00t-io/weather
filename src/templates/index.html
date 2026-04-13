@@ -819,6 +819,9 @@
 (function() {
   'use strict';
 
+  const API_KEY = {{ api_key | tojson }};
+  const AUTH_HEADERS = API_KEY ? { 'Authorization': 'Bearer ' + API_KEY } : {};
+
   // ── Icons ─────────────────────────────────────────────
   const ICONS = {
     'clear':            ['\u2600\uFE0F', '\uD83C\uDF19'],
@@ -930,7 +933,7 @@
 
   async function fetchGeocode(q) {
     try {
-      const r = await fetch('/api/geocode?q=' + encodeURIComponent(q));
+      const r = await fetch('/api/geocode?q=' + encodeURIComponent(q), { headers: AUTH_HEADERS });
       const data = await r.json();
       renderSearch(data);
     } catch(e) { console.error(e); }
@@ -971,7 +974,7 @@
     weatherContent.style.display = 'none';
 
     try {
-      const r = await fetch('/api/weather?lat=' + city.lat + '&lon=' + city.lon);
+      const r = await fetch('/api/weather?lat=' + city.lat + '&lon=' + city.lon, { headers: AUTH_HEADERS });
       const data = await r.json();
       if (data.error) throw new Error(data.error);
       renderWeather(city, data);

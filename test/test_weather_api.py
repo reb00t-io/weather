@@ -1,12 +1,18 @@
 """Tests for the weather API endpoints."""
 
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.main import app
-from src.weather_api import WMO_CODES, _weather_code_info
+# Set required env vars before importing app
+os.environ.setdefault("API_KEY", "test-api-key")
+
+from src.main import API_KEY, app  # noqa: E402
+from src.weather_api import WMO_CODES, _weather_code_info  # noqa: E402
+
+AUTH_HEADERS = {"Authorization": f"Bearer {API_KEY}"}
 
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
@@ -101,10 +107,22 @@ async def test_index_returns_200(client):
     assert "Wetter" in data
 
 
+# ── Auth ────────────────────────────────────────────────────────────────────
+
+async def test_api_without_auth_returns_401(client):
+    resp = await client.get("/api/geocode?q=Berlin")
+    assert resp.status_code == 401
+
+
+async def test_api_with_wrong_key_returns_401(client):
+    resp = await client.get("/api/geocode?q=Berlin", headers={"Authorization": "Bearer wrong"})
+    assert resp.status_code == 401
+
+
 # ── Geocode ─────────────────────────────────────────────────────────────────
 
 async def test_geocode_empty_query_returns_empty(client):
-    resp = await client.get("/api/geocode?q=")
+    resp = await client.get("/api/geocode?q=", headers=AUTH_HEADERS)
     assert resp.status_code == 200
     data = await resp.get_json()
     assert data == []
@@ -112,7 +130,7 @@ async def test_geocode_empty_query_returns_empty(client):
 
 async def test_geocode_returns_results(client):
     with _mock_aiohttp_get(SAMPLE_GEOCODE_RESPONSE):
-        resp = await client.get("/api/geocode?q=Berlin")
+        resp = await client.get("/api/geocode?q=Berlin", headers=AUTH_HEADERS)
     assert resp.status_code == 200
     data = await resp.get_json()
     assert len(data) == 2
@@ -124,14 +142,14 @@ async def test_geocode_returns_results(client):
 
 async def test_geocode_no_results(client):
     with _mock_aiohttp_get({"results": []}):
-        resp = await client.get("/api/geocode?q=xyznonexistent")
+        resp = await client.get("/api/geocode?q=xyznonexistent", headers=AUTH_HEADERS)
     data = await resp.get_json()
     assert data == []
 
 
 async def test_geocode_missing_results_key(client):
     with _mock_aiohttp_get({}):
-        resp = await client.get("/api/geocode?q=test")
+        resp = await client.get("/api/geocode?q=test", headers=AUTH_HEADERS)
     data = await resp.get_json()
     assert data == []
 
@@ -139,23 +157,23 @@ async def test_geocode_missing_results_key(client):
 # ── Weather ─────────────────────────────────────────────────────────────────
 
 async def test_weather_missing_params_returns_400(client):
-    resp = await client.get("/api/weather")
+    resp = await client.get("/api/weather", headers=AUTH_HEADERS)
     assert resp.status_code == 400
 
 
 async def test_weather_missing_lon_returns_400(client):
-    resp = await client.get("/api/weather?lat=52.52")
+    resp = await client.get("/api/weather?lat=52.52", headers=AUTH_HEADERS)
     assert resp.status_code == 400
 
 
 async def test_weather_invalid_lat_returns_400(client):
-    resp = await client.get("/api/weather?lat=abc&lon=13.41")
+    resp = await client.get("/api/weather?lat=abc&lon=13.41", headers=AUTH_HEADERS)
     assert resp.status_code == 400
 
 
 async def test_weather_returns_forecast(client):
     with _mock_aiohttp_get(SAMPLE_WEATHER_RESPONSE):
-        resp = await client.get("/api/weather?lat=52.52&lon=13.41")
+        resp = await client.get("/api/weather?lat=52.52&lon=13.41", headers=AUTH_HEADERS)
     assert resp.status_code == 200
     data = await resp.get_json()
 
@@ -182,7 +200,7 @@ async def test_weather_returns_forecast(client):
 
 async def test_weather_daily_structure(client):
     with _mock_aiohttp_get(SAMPLE_WEATHER_RESPONSE):
-        resp = await client.get("/api/weather?lat=52.52&lon=13.41")
+        resp = await client.get("/api/weather?lat=52.52&lon=13.41", headers=AUTH_HEADERS)
     data = await resp.get_json()
 
     day = data["daily"][1]
@@ -197,7 +215,7 @@ async def test_weather_daily_structure(client):
 
 async def test_weather_api_error_returns_502(client):
     with _mock_aiohttp_get({}, status=500):
-        resp = await client.get("/api/weather?lat=52.52&lon=13.41")
+        resp = await client.get("/api/weather?lat=52.52&lon=13.41", headers=AUTH_HEADERS)
     assert resp.status_code == 502
 
 
@@ -244,7 +262,7 @@ def test_all_wmo_codes_have_valid_entries():
 
 async def test_weather_hourly_contains_all_required_fields(client):
     with _mock_aiohttp_get(SAMPLE_WEATHER_RESPONSE):
-        resp = await client.get("/api/weather?lat=52.52&lon=13.41")
+        resp = await client.get("/api/weather?lat=52.52&lon=13.41", headers=AUTH_HEADERS)
     data = await resp.get_json()
 
     required_fields = {"time", "temp", "apparent_temp", "precip_prob", "precip",
@@ -256,7 +274,7 @@ async def test_weather_hourly_contains_all_required_fields(client):
 
 async def test_weather_daily_contains_all_required_fields(client):
     with _mock_aiohttp_get(SAMPLE_WEATHER_RESPONSE):
-        resp = await client.get("/api/weather?lat=52.52&lon=13.41")
+        resp = await client.get("/api/weather?lat=52.52&lon=13.41", headers=AUTH_HEADERS)
     data = await resp.get_json()
 
     required_fields = {"date", "temp_max", "temp_min", "precip_sum", "precip_prob",
@@ -268,7 +286,7 @@ async def test_weather_daily_contains_all_required_fields(client):
 
 async def test_weather_current_contains_all_required_fields(client):
     with _mock_aiohttp_get(SAMPLE_WEATHER_RESPONSE):
-        resp = await client.get("/api/weather?lat=52.52&lon=13.41")
+        resp = await client.get("/api/weather?lat=52.52&lon=13.41", headers=AUTH_HEADERS)
     data = await resp.get_json()
 
     required_fields = {"temp", "wind", "wind_dir", "code", "icon", "desc", "is_day", "time"}

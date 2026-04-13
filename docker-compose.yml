@@ -1,9 +1,10 @@
 services:
   weather:
-    build: .
+    image: weather
     container_name: weather
     restart: unless-stopped
     environment:
       - PORT=${PORT}
+      - API_KEY=${API_KEY}
     ports:
       - "${PORT}:${PORT}"

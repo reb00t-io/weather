@@ -2,7 +2,7 @@ import logging
 import os
 from pathlib import Path
 
-from quart import Quart, redirect, render_template, request, session, url_for
+from quart import Quart, jsonify, render_template, request
 
 try:
     from .weather_api import weather_bp
@@ -20,10 +20,28 @@ if not VERSION_PATH.exists():
 VERSION = VERSION_PATH.read_text().strip() if VERSION_PATH.exists() else "0.0.0"
 DEPLOY_DATE = os.environ.get("DEPLOY_DATE", "unknown")
 
+# API key — required, protects API endpoints with Bearer auth
+API_KEY = os.environ["API_KEY"]
+
+
+@app.before_request
+async def check_api_key():
+    # Public pages don't need auth
+    if request.path == "/" or request.path.startswith("/static/"):
+        return
+    auth = request.headers.get("Authorization", "")
+    if auth != f"Bearer {API_KEY}":
+        return jsonify({"error": "Unauthorized"}), 401
+
 
 @app.route("/")
 async def index():
-    return await render_template("index.html", version=VERSION, deploy_date=DEPLOY_DATE)
+    return await render_template(
+        "index.html",
+        version=VERSION,
+        deploy_date=DEPLOY_DATE,
+        api_key=API_KEY,
+    )
 
 
 if __name__ == "__main__":
