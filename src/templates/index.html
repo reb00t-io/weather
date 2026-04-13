@@ -70,7 +70,7 @@
     .header {
       position: sticky;
       top: 0;
-      z-index: 30;
+      z-index: 1000;
       padding: 0.75rem 1rem;
       background: rgba(15, 23, 42, 0.85);
       backdrop-filter: var(--glass);
@@ -602,6 +602,8 @@
       height: 65vh;
       min-height: 400px;
       background: #0f172a;
+      z-index: 0;
+      position: relative;
     }
 
     /* Override Leaflet tile gaps */
@@ -702,7 +704,7 @@
       width: 120px;
       height: 6px;
       border-radius: 3px;
-      background: linear-gradient(90deg, #00e400, #ffff00, #ff7e00, #ff0000, #99004c);
+      background: linear-gradient(90deg, #a0cfff, #4090e0, #2060c0, #1040a0, #082060);
     }
 
     /* ── Footer ──────────────────────────────────────────── */
@@ -1484,6 +1486,8 @@
     radarMap = L.map('radar-map', {
       center: center,
       zoom: zoom,
+      minZoom: 4,
+      maxZoom: 12,
       zoomControl: false,
       attributionControl: false,
     });
@@ -1535,10 +1539,10 @@
 
       radarFrames = [];
       for (const f of past) {
-        radarFrames.push({ time: f.time, path: host + f.path + '/256/{z}/{x}/{y}/6/1_1.png', type: 'past' });
+        radarFrames.push({ time: f.time, path: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'past' });
       }
       for (const f of nowcast) {
-        radarFrames.push({ time: f.time, path: host + f.path + '/256/{z}/{x}/{y}/6/1_1.png', type: 'forecast' });
+        radarFrames.push({ time: f.time, path: host + f.path + '/256/{z}/{x}/{y}/2/1_1.png', type: 'forecast' });
       }
 
       if (radarFrames.length) {
