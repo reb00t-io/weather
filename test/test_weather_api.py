@@ -87,6 +87,8 @@ SAMPLE_WEATHER_RESPONSE = {
         "weathercode": [3, 61, 0, 2, 63, 1, 0],
         "temperature_2m_max": [14, 12, 18, 16, 11, 15, 20],
         "temperature_2m_min": [6, 5, 7, 8, 4, 6, 9],
+        "apparent_temperature_max": [12, 10, 16, 14, 9, 13, 18],
+        "apparent_temperature_min": [3, 2, 4, 5, 1, 3, 6],
         "precipitation_sum": [0.0, 5.2, 0.0, 0.0, 8.1, 0.0, 0.0],
         "precipitation_probability_max": [10, 75, 5, 20, 85, 15, 0],
         "windspeed_10m_max": [20, 25, 12, 18, 30, 15, 10],
@@ -280,6 +282,7 @@ async def test_weather_daily_contains_all_required_fields(client):
 
     required_fields = {"date", "temp_max", "temp_min", "precip_sum", "precip_prob",
                        "wind_max", "wind_dir", "sunrise", "sunset", "uv_max", "sun_hours",
+                       "feels_max", "feels_min",
                        "code", "icon", "desc"}
     for d in data["daily"]:
         assert required_fields.issubset(d.keys()), f"Missing fields: {required_fields - set(d.keys())}"
@@ -292,3 +295,13 @@ async def test_weather_current_contains_all_required_fields(client):
 
     required_fields = {"temp", "wind", "wind_dir", "code", "icon", "desc", "is_day", "time"}
     assert required_fields.issubset(data["current"].keys())
+
+
+async def test_weather_response_contains_aqi_and_warnings(client):
+    with _mock_aiohttp_get(SAMPLE_WEATHER_RESPONSE):
+        resp = await client.get("/api/weather?lat=52.52&lon=13.41", headers=AUTH_HEADERS)
+    data = await resp.get_json()
+    # aqi and warnings should be present (may be null/empty if upstream fails)
+    assert "aqi" in data
+    assert "warnings" in data
+    assert isinstance(data["warnings"], list)

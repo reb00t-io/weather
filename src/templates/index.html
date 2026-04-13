@@ -82,9 +82,31 @@
       position: relative;
     }
 
+    .geo-btn {
+      position: absolute;
+      right: 2.25rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 30px;
+      height: 30px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      transition: color 0.15s, background 0.15s;
+      padding: 0;
+      z-index: 2;
+    }
+    .geo-btn:hover { color: var(--primary); background: rgba(59, 130, 246, 0.1); }
+    .geo-btn.loading { animation: spin 0.8s linear infinite; }
+
     .search-input {
       width: 100%;
-      padding: 0.75rem 2.25rem 0.75rem 2.5rem;
+      padding: 0.75rem 4.5rem 0.75rem 2.5rem;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: var(--bg-surface);
@@ -384,6 +406,76 @@
     .current-detail-icon { font-size: 1rem; margin-bottom: 0.125rem; }
     .current-detail-val { font-size: 0.8125rem; font-weight: 600; }
     .current-detail-label { font-size: 0.625rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    .current-feels {
+      font-size: 0.8125rem;
+      opacity: 0.75;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── Warnings ─────────────────────────────────────────── */
+    .warnings-wrap { margin-bottom: 0.75rem; }
+
+    .warning-banner {
+      border-radius: var(--radius-sm);
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.5rem;
+      font-size: 0.8125rem;
+      line-height: 1.4;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .warning-banner:active { opacity: 0.8; }
+
+    .warning-banner.severity-minor { background: rgba(250,204,21,0.15); border-left: 3px solid #fbbf24; color: #fef3c7; }
+    .warning-banner.severity-moderate { background: rgba(245,158,11,0.2); border-left: 3px solid #f59e0b; color: #fef3c7; }
+    .warning-banner.severity-severe { background: rgba(239,68,68,0.2); border-left: 3px solid #ef4444; color: #fecaca; }
+    .warning-banner.severity-extreme { background: rgba(147,51,234,0.2); border-left: 3px solid #9333ea; color: #e9d5ff; }
+
+    .warning-headline { font-weight: 700; margin-bottom: 0.25rem; }
+    .warning-desc { display: none; font-size: 0.75rem; opacity: 0.85; margin-top: 0.375rem; }
+    .warning-banner.expanded .warning-desc { display: block; }
+    .warning-expires { font-size: 0.6875rem; opacity: 0.6; }
+
+    /* ── AQI Card ─────────────────────────────────────────── */
+    .aqi-card {
+      background: var(--bg-card);
+      backdrop-filter: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .aqi-gauge {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .aqi-gauge.green { background: #22c55e; }
+    .aqi-gauge.yellow { background: #eab308; color: #1a1a2e; }
+    .aqi-gauge.orange { background: #f97316; }
+    .aqi-gauge.red { background: #ef4444; }
+    .aqi-gauge.purple { background: #9333ea; }
+    .aqi-gauge.maroon { background: #7f1d1d; }
+
+    .aqi-info { flex: 1; min-width: 0; }
+    .aqi-title { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; }
+    .aqi-level { font-size: 1rem; font-weight: 700; margin-top: 0.125rem; }
+    .aqi-details { font-size: 0.6875rem; color: var(--text-muted); margin-top: 0.25rem; }
 
     /* ── Section ──────────────────────────────────────────── */
     .section-label {
@@ -821,6 +913,11 @@
         <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
       </svg>
       <input class="search-input" id="search" type="text" placeholder="Stadt suchen..." autocomplete="off" spellcheck="false">
+      <button class="geo-btn" id="geo-btn" type="button" aria-label="Mein Standort">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+        </svg>
+      </button>
       <button class="search-clear" id="search-clear" type="button" aria-label="Suche leeren">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -851,6 +948,8 @@
       </div>
 
       <div id="weather-content" style="display:none">
+        <div class="warnings-wrap" id="warnings-wrap"></div>
+
         <div class="current-card" id="current-card">
           <div class="current-top">
             <div>
@@ -865,15 +964,18 @@
             <div class="current-temp-unit">&deg;C</div>
           </div>
           <div class="current-desc" id="current-desc"></div>
+          <div class="current-feels" id="current-feels"></div>
           <div class="current-details" id="current-details"></div>
         </div>
+
+        <div class="aqi-card fade-in" id="aqi-card" style="display:none"></div>
 
         <div class="section-label fade-in fade-in-delay-1">Heute stundenweise</div>
         <div class="hourly-card fade-in fade-in-delay-1">
           <div class="hourly-outer" id="hourly-outer"></div>
         </div>
 
-        <div class="section-label fade-in fade-in-delay-2">7-Tage-Vorhersage</div>
+        <div class="section-label fade-in fade-in-delay-2">14-Tage-Vorhersage</div>
         <div class="temp-chart-card fade-in fade-in-delay-2" id="temp-chart-card">
           <div class="temp-chart-scroll" id="temp-chart-scroll"></div>
           <div class="temp-chart-legend">
@@ -1228,6 +1330,20 @@
     $('current-icon').textContent = icon(c.icon, c.is_day);
     $('current-desc').textContent = c.desc;
 
+    // Feels-like from current hourly entry
+    const ch = data.hourly.find(h => {
+      const hd = new Date(h.time);
+      return hd.getHours() === now.getHours() && hd.getDate() === now.getDate();
+    }) || {};
+    const feelsTemp = ch.apparent_temp;
+    const feelsEl = $('current-feels');
+    if (feelsTemp != null && Math.abs(feelsTemp - c.temp) >= 1.5) {
+      feelsEl.textContent = 'Gef\u00FChlt ' + Math.round(feelsTemp) + '\u00B0';
+      feelsEl.style.display = '';
+    } else {
+      feelsEl.style.display = 'none';
+    }
+
     // DWD station source
     const srcEl = $('current-source');
     if (c.source) {
@@ -1237,22 +1353,65 @@
       srcEl.style.display = 'none';
     }
 
-    // Find current hourly entry for precip probability (forecast-only metric)
-    const ch = data.hourly.find(h => {
-      const hd = new Date(h.time);
-      return hd.getHours() === now.getHours() && hd.getDate() === now.getDate();
-    }) || {};
-
     $('current-details').innerHTML =
       detailCard('\uD83D\uDCA8', Math.round(c.wind || 0) + ' km/h', 'Wind') +
       detailCard('\uD83D\uDCA7', (ch.precip_prob ?? '--') + '%', 'Regen') +
       detailCard('\uD83D\uDCA6', (c.humidity ?? ch.humidity ?? '--') + '%', 'Feuchte') +
       detailCard('\u2601\uFE0F', (c.cloud ?? ch.cloud ?? '--') + '%', 'Wolken');
 
+    // Warnings
+    renderWarnings(data.warnings || []);
+
+    // Air quality
+    renderAqi(data.aqi);
+
     renderHourly(data.hourly, now);
     renderTempChart(data.daily);
     renderDaily(data.daily, data.hourly);
     weatherContent.style.display = 'block';
+  }
+
+  // ── Warnings ──────────────────────────────────────────
+  function renderWarnings(warnings) {
+    const wrap = $('warnings-wrap');
+    wrap.innerHTML = '';
+    if (!warnings.length) return;
+
+    for (const w of warnings) {
+      const sev = (w.severity || 'minor').toLowerCase();
+      const cls = ['extreme','severe','moderate'].includes(sev) ? sev : 'minor';
+      const div = document.createElement('div');
+      div.className = 'warning-banner severity-' + cls;
+      let exp = '';
+      if (w.expires) {
+        const d = new Date(w.expires);
+        exp = '<div class="warning-expires">bis ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' Uhr, ' + d.getDate() + '. ' + MON[d.getMonth()] + '</div>';
+      }
+      div.innerHTML = '<div class="warning-headline">\u26A0\uFE0F ' + esc(w.headline || w.event) + '</div>' + exp +
+        '<div class="warning-desc">' + esc(w.description) + '</div>';
+      div.addEventListener('click', () => div.classList.toggle('expanded'));
+      wrap.appendChild(div);
+    }
+  }
+
+  // ── Air Quality ───────────────────────────────────────
+  function renderAqi(aqi) {
+    const el = $('aqi-card');
+    if (!aqi) { el.style.display = 'none'; return; }
+    el.style.display = 'flex';
+    const details = [
+      aqi.pm2_5 != null ? 'PM2.5: ' + Math.round(aqi.pm2_5) : '',
+      aqi.pm10 != null ? 'PM10: ' + Math.round(aqi.pm10) : '',
+      aqi.no2 != null ? 'NO\u2082: ' + Math.round(aqi.no2) : '',
+      aqi.o3 != null ? 'O\u2083: ' + Math.round(aqi.o3) : '',
+    ].filter(Boolean).join(' \u00B7 ');
+    el.innerHTML =
+      '<div class="aqi-gauge ' + aqi.color + '">' + Math.round(aqi.eaqi) + '</div>' +
+      '<div class="aqi-info">' +
+        '<div class="aqi-title">Luftqualit\u00E4t</div>' +
+        '<div class="aqi-level">' + esc(aqi.level) + '</div>' +
+        '<div class="aqi-details">' + details + '</div>' +
+      '</div>';
   }
 
   function detailCard(ic, val, label) {
@@ -1393,6 +1552,15 @@
     $('current-temp').textContent = Math.round(h.temp);
     $('current-icon').textContent = icon(h.icon, h.is_day);
     $('current-desc').textContent = h.desc;
+
+    // Feels-like
+    const feelsEl = $('current-feels');
+    if (h.apparent_temp != null && Math.abs(h.apparent_temp - h.temp) >= 1.5) {
+      feelsEl.textContent = 'Gef\u00FChlt ' + Math.round(h.apparent_temp) + '\u00B0';
+      feelsEl.style.display = '';
+    } else {
+      feelsEl.style.display = 'none';
+    }
 
     // Update detail cards
     $('current-details').innerHTML =
@@ -1628,7 +1796,11 @@
   function renderDayDetail(el, day, hourly) {
     const dayH = hourly.filter(h => h.time && h.time.startsWith(day.date));
 
+    const feelsStr = (day.feels_min != null && day.feels_max != null)
+      ? Math.round(day.feels_min) + '\u00B0 / ' + Math.round(day.feels_max) + '\u00B0'
+      : '--';
     let html = '<div class="daily-detail-grid">' +
+      '<div class="daily-detail-item">\uD83C\uDF21\uFE0F Gef\u00FChlt: <strong>' + feelsStr + '</strong></div>' +
       '<div class="daily-detail-item">\uD83D\uDCA8 Wind: <strong>' + Math.round(day.wind_max) + ' km/h ' + windDir(day.wind_dir) + '</strong></div>' +
       '<div class="daily-detail-item">\u2600\uFE0F UV: <strong>' + (day.uv_max != null ? day.uv_max : '--') + '</strong></div>' +
       '<div class="daily-detail-item">\uD83C\uDF05 Aufgang: <strong>' + (day.sunrise ? day.sunrise.slice(11,16) : '--') + '</strong></div>' +
@@ -1819,6 +1991,34 @@
       clearInterval(radarTimer);
     }
   }
+
+  // ── Geolocation ────────────────────────────────────────
+  const geoBtn = $('geo-btn');
+  geoBtn.addEventListener('click', () => {
+    if (!navigator.geolocation) return;
+    geoBtn.classList.add('loading');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        geoBtn.classList.remove('loading');
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        try {
+          const r = await fetch('/api/reverse-geocode?lat=' + lat + '&lon=' + lon, { headers: AUTH_HEADERS });
+          const city = await r.json();
+          city.lat = lat;
+          city.lon = lon;
+          selectCity(city);
+        } catch(e) {
+          selectCity({ name: 'Mein Standort', admin1: '', country: '', lat: lat, lon: lon });
+        }
+      },
+      (err) => {
+        geoBtn.classList.remove('loading');
+        console.log('Geolocation denied:', err.message);
+      },
+      { enableHighAccuracy: false, timeout: 10000 }
+    );
+  });
 
   // ── Init ──────────────────────────────────────────────
   const saved = localStorage.getItem('weather_city');

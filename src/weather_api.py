@@ -12,7 +12,9 @@ weather_bp = Blueprint("weather", __name__)
 
 OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search"
+OPEN_METEO_AQI = "https://air-quality-api.open-meteo.com/v1/air-quality"
 BRIGHTSKY_CURRENT = "https://api.brightsky.dev/current_weather"
+DWD_WARNINGS = "https://api.brightsky.dev/alerts"
 
 # WMO weather code -> (description, icon name)
 WMO_CODES = {
@@ -98,17 +100,43 @@ async def _fetch_brightsky(session, lat, lon):
         return None
 
 
-def _parse_brightsky_current(bs_data, is_day_fallback=None):
-    """Parse Bright Sky current_weather response into our format.
+async def _fetch_aqi(session, lat, lon):
+    """Fetch air quality from Open-Meteo."""
+    try:
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "current": "european_aqi,pm2_5,pm10,nitrogen_dioxide,ozone",
+            "timezone": "Europe/Berlin",
+        }
+        async with session.get(OPEN_METEO_AQI, params=params) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.json()
+    except Exception as e:
+        logger.debug("AQI fetch failed: %s", e)
+        return None
 
-    Returns a dict matching our ``current`` response shape, or None on failure.
-    """
+
+async def _fetch_warnings(session, lat, lon):
+    """Fetch DWD weather warnings from Bright Sky alerts API."""
+    try:
+        params = {"lat": lat, "lon": lon, "tz": "Europe/Berlin"}
+        async with session.get(DWD_WARNINGS, params=params) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.json()
+    except Exception as e:
+        logger.debug("DWD warnings fetch failed: %s", e)
+        return None
+
+
+def _parse_brightsky_current(bs_data, is_day_fallback=None):
+    """Parse Bright Sky current_weather response into our format."""
     if not bs_data or "weather" not in bs_data:
         return None
 
     w = bs_data["weather"]
-
-    # Require at least a valid temperature
     if w.get("temperature") is None:
         return None
 
@@ -118,7 +146,6 @@ def _parse_brightsky_current(bs_data, is_day_fallback=None):
         return None
     desc, our_icon = mapped
 
-    # is_day from icon suffix, fall back to Open-Meteo value
     if bs_icon.endswith("-day"):
         is_day = 1
     elif bs_icon.endswith("-night"):
@@ -126,7 +153,6 @@ def _parse_brightsky_current(bs_data, is_day_fallback=None):
     else:
         is_day = is_day_fallback
 
-    # Refine 'wind' icon using cloud_cover
     cloud = w.get("cloud_cover")
     if bs_icon == "wind" and cloud is not None:
         if cloud < 25:
@@ -136,7 +162,6 @@ def _parse_brightsky_current(bs_data, is_day_fallback=None):
         else:
             desc, our_icon = ("Bewölkt", "overcast")
 
-    # Refine rain/snow intensity from 10-min precipitation
     precip_10 = w.get("precipitation_10") or 0
     if bs_icon == "rain":
         if precip_10 < 0.2:
@@ -149,7 +174,6 @@ def _parse_brightsky_current(bs_data, is_day_fallback=None):
         elif precip_10 >= 2.0:
             desc, our_icon = ("Starker Schneefall", "snow-heavy")
 
-    # Build source station info
     source = None
     sources = bs_data.get("sources", [])
     if sources:
@@ -174,6 +198,57 @@ def _parse_brightsky_current(bs_data, is_day_fallback=None):
     }
 
 
+def _parse_aqi(aqi_data):
+    """Parse Open-Meteo AQI response."""
+    if not aqi_data or "current" not in aqi_data:
+        return None
+    c = aqi_data["current"]
+    eaqi = c.get("european_aqi")
+    if eaqi is None:
+        return None
+
+    # European AQI levels
+    if eaqi <= 20:
+        level, color = "Gut", "green"
+    elif eaqi <= 40:
+        level, color = "Mäßig", "yellow"
+    elif eaqi <= 60:
+        level, color = "Mittel", "orange"
+    elif eaqi <= 80:
+        level, color = "Schlecht", "red"
+    elif eaqi <= 100:
+        level, color = "Sehr schlecht", "purple"
+    else:
+        level, color = "Gefährlich", "maroon"
+
+    return {
+        "eaqi": eaqi,
+        "level": level,
+        "color": color,
+        "pm2_5": c.get("pm2_5"),
+        "pm10": c.get("pm10"),
+        "no2": c.get("nitrogen_dioxide"),
+        "o3": c.get("ozone"),
+    }
+
+
+def _parse_warnings(warn_data):
+    """Parse Bright Sky DWD alerts response."""
+    if not warn_data or "alerts" not in warn_data:
+        return []
+    alerts = []
+    for a in warn_data["alerts"]:
+        alerts.append({
+            "headline": a.get("headline", ""),
+            "description": a.get("description", ""),
+            "severity": a.get("severity", ""),
+            "event": a.get("event", ""),
+            "effective": a.get("effective"),
+            "expires": a.get("expires"),
+        })
+    return alerts
+
+
 @weather_bp.route("/api/geocode")
 async def geocode():
     q = request.args.get("q", "").strip()
@@ -193,6 +268,34 @@ async def geocode():
             "lon": r.get("longitude"),
         })
     return jsonify(results)
+
+
+@weather_bp.route("/api/reverse-geocode")
+async def reverse_geocode():
+    """Reverse geocode lat/lon to city name using Open-Meteo."""
+    try:
+        lat = float(request.args["lat"])
+        lon = float(request.args["lon"])
+    except (KeyError, ValueError):
+        return jsonify({"error": "lat and lon required"}), 400
+    # Search for nearest city by using coordinates as a search hint
+    # Open-Meteo geocoding doesn't have reverse geocode, so we use a nearby city search
+    params = {"latitude": lat, "longitude": lon, "count": 1, "language": "de", "format": "json"}
+    async with aiohttp.ClientSession() as s:
+        # Use a name-based search with empty name won't work, so use the Bright Sky source
+        try:
+            bs_params = {"lat": lat, "lon": lon, "tz": "Europe/Berlin"}
+            async with s.get(BRIGHTSKY_CURRENT, params=bs_params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    sources = data.get("sources", [])
+                    if sources:
+                        name = sources[0].get("station_name", "")
+                        if name:
+                            return jsonify({"name": name, "admin1": "", "country": "Deutschland", "lat": lat, "lon": lon})
+        except Exception:
+            pass
+    return jsonify({"name": "Mein Standort", "admin1": "", "country": "", "lat": lat, "lon": lon})
 
 
 @weather_bp.route("/api/weather")
@@ -222,6 +325,8 @@ async def weather():
             "weathercode",
             "temperature_2m_max",
             "temperature_2m_min",
+            "apparent_temperature_max",
+            "apparent_temperature_min",
             "precipitation_sum",
             "precipitation_probability_max",
             "windspeed_10m_max",
@@ -233,15 +338,17 @@ async def weather():
         ]),
         "current_weather": "true",
         "timezone": "Europe/Berlin",
-        "forecast_days": 7,
+        "forecast_days": 14,
         "models": "icon_seamless",
     }
 
-    # Fetch Open-Meteo forecasts and Bright Sky observations in parallel
+    # Fetch all data sources in parallel
     async with aiohttp.ClientSession() as s:
-        om_data, bs_data = await asyncio.gather(
+        om_data, bs_data, aqi_data, warn_data = await asyncio.gather(
             _fetch_openmeteo(s, om_params),
             _fetch_brightsky(s, lat, lon),
+            _fetch_aqi(s, lat, lon),
+            _fetch_warnings(s, lat, lon),
         )
 
     if om_data is None:
@@ -256,7 +363,6 @@ async def weather():
     if bs_current:
         current_out = bs_current
     else:
-        # Fallback to Open-Meteo model data
         current_code = om_current.get("weathercode")
         current_info = _weather_code_info(current_code)
         current_out = {
@@ -307,6 +413,8 @@ async def weather():
             "date": t,
             "temp_max": daily_raw.get("temperature_2m_max", [])[i],
             "temp_min": daily_raw.get("temperature_2m_min", [])[i],
+            "feels_max": daily_raw.get("apparent_temperature_max", [])[i],
+            "feels_min": daily_raw.get("apparent_temperature_min", [])[i],
             "precip_sum": daily_raw.get("precipitation_sum", [])[i],
             "precip_prob": daily_raw.get("precipitation_probability_max", [])[i],
             "wind_max": daily_raw.get("windspeed_10m_max", [])[i],
@@ -324,4 +432,6 @@ async def weather():
         "current": current_out,
         "hourly": hourly,
         "daily": daily,
+        "aqi": _parse_aqi(aqi_data),
+        "warnings": _parse_warnings(warn_data),
     })
