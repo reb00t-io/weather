@@ -106,7 +106,7 @@
 
     .search-input {
       width: 100%;
-      padding: 0.75rem 4.5rem 0.75rem 2.5rem;
+      padding: 0.75rem 3.75rem 0.75rem 2.5rem;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: var(--bg-surface);
@@ -961,7 +961,7 @@
       <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
       </svg>
-      <input class="search-input" id="search" type="text" placeholder="Stadt suchen..." autocomplete="off" spellcheck="false">
+      <input class="search-input" id="search" type="search" placeholder="Stadt suchen..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
       <button class="geo-btn" id="geo-btn" type="button" aria-label="Mein Standort">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="4"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
@@ -1237,6 +1237,9 @@
       searchResults.appendChild(label);
       for (const r of matching) searchResults.appendChild(createRecentItem(r));
       searchResults.classList.add('open');
+    } else {
+      searchResults.innerHTML = '';
+      searchResults.classList.remove('open');
     }
   }
 
