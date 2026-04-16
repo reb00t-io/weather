@@ -1,13 +1,16 @@
 # Improvement Plan
+Map:
+- The map is too dark, I need something more green/beautiful
+- Rain forecast is not working
 
-## Current priorities
-1. Ensure README and AGENTS.md accurately describe the current Quart-based architecture
-2. Add test coverage for any untested critical paths (session persistence, mode switching)
-3. Clean up any dead code or unused imports
-
-## Recently completed
-- (initial plan — no iterations yet)
-
-## Observations
-- The codebase migrated from Flask to Quart but some docs may still reference Flask
-- The self-improvement agent system is newly added and should be validated
+Add images:
+- When a location is selected, show an image for that location for the given weather
+  - day
+    - sun (also if mixed)
+    - claud (close to no sun)
+    - rain
+    - snow
+  - night
+- So you have to find a way to find high quality free images
+- When the Geolocation is used, find the larger region, e.g., for Berlin-Marzahn, I want an image from Berlin that I can recognize.
+- Keep a cache of city images
