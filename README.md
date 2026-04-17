@@ -67,6 +67,8 @@ python src/main.py
 - `PORT`: required; server listen port
 - `PUBLIC_URL`: used by deployment and public smoke checks
 - `DEPLOY_DATE`: optional; shown in the UI, normally injected at Docker build time
+- `UNSPLASH_ACCESS_KEY`: optional; enables weather-aware city images via Unsplash API. Without it, falls back to Wikipedia images (no weather matching).
+- `CITY_IMAGE_CACHE_PATH`: optional; path to the SQLite cache file for city images. Defaults to `~/.cache/weather/city_images.db`.
 - `NOTIFY_API_KEY`: optional; enables deploy notifications in `scripts/notify.sh`
 
 `.envrc` loads `.envrc.local` automatically if present, which is the intended place for local secrets.

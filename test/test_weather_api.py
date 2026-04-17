@@ -2,6 +2,9 @@
 
 import json
 import os
+import tempfile
+import time as _time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +13,13 @@ import pytest
 os.environ.setdefault("API_KEY", "test-api-key")
 
 from src.main import API_KEY, app  # noqa: E402
-from src.weather_api import WMO_CODES, _weather_code_info  # noqa: E402
+from src.weather_api import (  # noqa: E402
+    CityImageCache,
+    WMO_CODES,
+    _weather_code_info,
+    _resolve_city,
+    _weather_search_term,
+)
 
 AUTH_HEADERS = {"Authorization": f"Bearer {API_KEY}"}
 
@@ -20,6 +29,14 @@ AUTH_HEADERS = {"Authorization": f"Bearer {API_KEY}"}
 @pytest.fixture()
 def client():
     return app.test_client()
+
+
+@pytest.fixture()
+def tmp_cache(tmp_path):
+    """Provide a fresh SQLite cache in a temp dir and patch it into the module."""
+    cache = CityImageCache(tmp_path / "test_cache.db")
+    with patch("src.weather_api._city_image_cache", cache):
+        yield cache
 
 
 def _mock_aiohttp_get(json_data, status=200):
@@ -305,3 +322,160 @@ async def test_weather_response_contains_aqi_and_warnings(client):
     assert "aqi" in data
     assert "warnings" in data
     assert isinstance(data["warnings"], list)
+
+
+# ── City name resolution ───────────────────────────────────────────────────
+
+def test_resolve_city_strips_district():
+    assert _resolve_city("Berlin-Marzahn") == "Berlin"
+
+
+def test_resolve_city_strips_comma():
+    assert _resolve_city("Berlin, Germany") == "Berlin"
+
+
+def test_resolve_city_strips_en_dash():
+    assert _resolve_city("München–Schwabing") == "München"
+
+
+def test_resolve_city_plain():
+    assert _resolve_city("Hamburg") == "Hamburg"
+
+
+def test_resolve_city_combined():
+    assert _resolve_city("Berlin-Marzahn, Deutschland") == "Berlin"
+
+
+# ── Weather search term mapping ────────────────────────────────────────────
+
+def test_weather_search_term_sun():
+    assert _weather_search_term("sun", False) == "sunny"
+
+
+def test_weather_search_term_rain():
+    assert _weather_search_term("rain", False) == "rain rainy"
+
+
+def test_weather_search_term_snow():
+    assert _weather_search_term("snow", False) == "snow winter"
+
+
+def test_weather_search_term_cloud():
+    assert _weather_search_term("cloud", False) == "cloudy overcast"
+
+
+def test_weather_search_term_night_overrides():
+    assert _weather_search_term("sun", True) == "night skyline"
+
+
+def test_weather_search_term_default():
+    assert _weather_search_term(None, False) == "skyline cityscape"
+
+
+# ── City image endpoint ────────────────────────────────────────────────────
+
+async def test_city_image_empty_city(client):
+    resp = await client.get("/api/city-image?city=", headers=AUTH_HEADERS)
+    assert resp.status_code == 200
+    data = await resp.get_json()
+    assert data["url"] is None
+    assert data["attribution"] is None
+
+
+async def test_city_image_wikipedia_fallback(client, tmp_cache):
+    """Without UNSPLASH_ACCESS_KEY, falls back to Wikipedia."""
+    wiki_response = {
+        "originalimage": {"source": "https://upload.wikimedia.org/commons/a/ab/Berlin.jpg", "width": 1200},
+        "thumbnail": {"source": "https://upload.wikimedia.org/commons/thumb/a/ab/Berlin.jpg/300px-Berlin.jpg", "width": 300},
+    }
+    with patch("src.weather_api.UNSPLASH_ACCESS_KEY", None), \
+         _mock_aiohttp_get(wiki_response):
+        resp = await client.get("/api/city-image?city=Berlin&weather=sun", headers=AUTH_HEADERS)
+    data = await resp.get_json()
+    assert data["url"] is not None
+    assert "Berlin" in data["url"]
+    assert data["attribution"] is None
+
+
+async def test_city_image_unsplash(client, tmp_cache):
+    """With UNSPLASH_ACCESS_KEY set, uses Unsplash."""
+    unsplash_response = {
+        "results": [{
+            "urls": {"regular": "https://images.unsplash.com/photo-berlin-sunny"},
+            "user": {"name": "Test Photographer"},
+            "links": {"html": "https://unsplash.com/photos/abc"},
+        }],
+    }
+    with patch("src.weather_api.UNSPLASH_ACCESS_KEY", "test-key"), \
+         _mock_aiohttp_get(unsplash_response):
+        resp = await client.get("/api/city-image?city=Berlin&weather=sun&is_night=0", headers=AUTH_HEADERS)
+    data = await resp.get_json()
+    assert data["url"] == "https://images.unsplash.com/photo-berlin-sunny"
+    assert data["attribution"]["name"] == "Test Photographer"
+
+
+async def test_city_image_caching(client, tmp_cache):
+    """Cached results are returned without hitting API again."""
+    tmp_cache.put("Berlin:sun:False", "https://cached.example.com/image.jpg", None)
+    resp = await client.get("/api/city-image?city=Berlin&weather=sun&is_night=0", headers=AUTH_HEADERS)
+    data = await resp.get_json()
+    assert data["url"] == "https://cached.example.com/image.jpg"
+
+
+async def test_city_image_resolves_district(client, tmp_cache):
+    """Berlin-Marzahn should resolve to Berlin for image search."""
+    wiki_response = {
+        "originalimage": {"source": "https://upload.wikimedia.org/commons/a/ab/Berlin.jpg", "width": 1200},
+    }
+    with patch("src.weather_api.UNSPLASH_ACCESS_KEY", None), \
+         _mock_aiohttp_get(wiki_response):
+        resp = await client.get("/api/city-image?city=Berlin-Marzahn", headers=AUTH_HEADERS)
+    data = await resp.get_json()
+    assert data["url"] is not None
+
+
+# ── CityImageCache persistence tests ──────────────────────────────────────
+
+def test_cache_write_and_read(tmp_path):
+    cache = CityImageCache(tmp_path / "c.db")
+    cache.put("Berlin:sun:False", "https://example.com/berlin.jpg", {"name": "Alice", "link": "https://u.com/a"})
+    entry = cache.get("Berlin:sun:False")
+    assert entry is not None
+    assert entry["url"] == "https://example.com/berlin.jpg"
+    assert entry["attribution"]["name"] == "Alice"
+
+
+def test_cache_ttl_expiry(tmp_path):
+    cache = CityImageCache(tmp_path / "c.db")
+    cache.put("X:rain:True", "https://example.com/x.jpg", None)
+    # Fresh entry should be returned
+    assert cache.get("X:rain:True") is not None
+    # With a TTL of 0 seconds it should be expired
+    assert cache.get("X:rain:True", ttl=0) is None
+
+
+def test_cache_miss_returns_none(tmp_path):
+    cache = CityImageCache(tmp_path / "c.db")
+    assert cache.get("nonexistent:key:here") is None
+
+
+def test_cache_persists_across_instances(tmp_path):
+    """Simulates a restart: second CityImageCache instance sees first's data."""
+    db_path = tmp_path / "persist.db"
+    cache1 = CityImageCache(db_path)
+    cache1.put("Hamburg:cloud:False", "https://example.com/hh.jpg", None)
+
+    # Create a brand-new instance pointing at the same file
+    cache2 = CityImageCache(db_path)
+    entry = cache2.get("Hamburg:cloud:False")
+    assert entry is not None
+    assert entry["url"] == "https://example.com/hh.jpg"
+
+
+def test_cache_stores_none_url(tmp_path):
+    """None URLs (failed lookups) should be cached to avoid repeated failures."""
+    cache = CityImageCache(tmp_path / "c.db")
+    cache.put("Nowhere:sun:False", None, None)
+    entry = cache.get("Nowhere:sun:False")
+    assert entry is not None
+    assert entry["url"] is None

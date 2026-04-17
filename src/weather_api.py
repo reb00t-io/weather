@@ -1,14 +1,129 @@
 """Weather API routes using Open-Meteo (forecasts) and Bright Sky / DWD (current observations)."""
 
 import asyncio
+import json as _json
 import logging
+import os
+import re
+import sqlite3
+import threading
+import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 import aiohttp
 from quart import Blueprint, jsonify, request
 
 logger = logging.getLogger(__name__)
 weather_bp = Blueprint("weather", __name__)
+
+UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY")
+
+# ── Persistent city image cache (SQLite) ──────────────────
+_CACHE_TTL = 86400  # 24 hours
+
+
+class CityImageCache:
+    """SQLite-backed persistent cache for city images.
+
+    Concurrency: Uses WAL mode so readers never block. A threading lock
+    serialises writes — safe under Quart's async event loop because
+    sqlite3 ops hit local disk and complete in < 1 ms.
+    """
+
+    def __init__(self, db_path: str | Path | None = None):
+        if db_path is None:
+            db_path = os.environ.get(
+                "CITY_IMAGE_CACHE_PATH",
+                str(Path.home() / ".cache" / "weather" / "city_images.db"),
+            )
+        self._db_path = str(db_path)
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._write_lock = threading.Lock()
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path, timeout=5)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    def _init_db(self) -> None:
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS city_images (
+                        cache_key   TEXT PRIMARY KEY,
+                        url         TEXT,
+                        attribution TEXT,
+                        fetched_at  REAL NOT NULL
+                    )
+                """)
+                conn.commit()
+            finally:
+                conn.close()
+
+    def get(self, key: str, ttl: float = _CACHE_TTL) -> dict | None:
+        """Return cached entry if present and fresh, else None."""
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT url, attribution, fetched_at FROM city_images WHERE cache_key = ?",
+                (key,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        url, attr_json, fetched_at = row
+        if (time.time() - fetched_at) >= ttl:
+            return None  # expired
+        return {
+            "url": url,
+            "attribution": _json.loads(attr_json) if attr_json else None,
+            "ts": fetched_at,
+        }
+
+    def put(self, key: str, url: str | None, attribution: dict | None) -> None:
+        """Insert or replace a cache entry."""
+        attr_json = _json.dumps(attribution) if attribution else None
+        with self._write_lock:
+            conn = self._connect()
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO city_images (cache_key, url, attribution, fetched_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (key, url, attr_json, time.time()),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+
+
+_city_image_cache = CityImageCache()
+
+
+def _resolve_city(city: str) -> str:
+    """Simplify city name: strip district suffixes and comma-separated parts."""
+    city = city.split(",")[0].strip()
+    city = re.split(r"[-–]", city)[0].strip()
+    return city
+
+
+def _weather_search_term(weather: str | None, is_night: bool) -> str:
+    """Map weather/night params to Unsplash search terms."""
+    if is_night:
+        return "night skyline"
+    if weather == "sun":
+        return "sunny"
+    if weather == "cloud":
+        return "cloudy overcast"
+    if weather == "rain":
+        return "rain rainy"
+    if weather == "snow":
+        return "snow winter"
+    return "skyline cityscape"
+
 
 OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search"
@@ -270,47 +385,100 @@ async def geocode():
     return jsonify(results)
 
 
+async def _search_unsplash(session, city: str, weather: str | None, is_night: bool):
+    """Search Unsplash for a weather-aware city photo. Returns (url, attribution) or (None, None)."""
+    if not UNSPLASH_ACCESS_KEY:
+        return None, None
+    term = _weather_search_term(weather, is_night)
+    query = f"{city} {term} cityscape"
+    try:
+        headers = {"Authorization": f"Client-ID {UNSPLASH_ACCESS_KEY}"}
+        params = {"query": query, "per_page": 3, "orientation": "landscape"}
+        async with session.get(
+            "https://api.unsplash.com/search/photos", headers=headers, params=params,
+        ) as resp:
+            if resp.status != 200:
+                logger.debug("Unsplash error %s for query '%s'", resp.status, query)
+                return None, None
+            data = await resp.json()
+            results = data.get("results", [])
+            if not results:
+                return None, None
+            photo = results[0]
+            url = photo["urls"]["regular"]
+            attribution = {
+                "name": photo["user"]["name"],
+                "link": photo["links"]["html"],
+            }
+            return url, attribution
+    except Exception as e:
+        logger.debug("Unsplash fetch failed: %s", e)
+        return None, None
+
+
+async def _search_wikipedia(session, city: str):
+    """Search Wikipedia for a city image. Returns URL or None."""
+    for lang in ("de", "en"):
+        url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{city}"
+        try:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json()
+                orig = data.get("originalimage", {})
+                thumb = data.get("thumbnail", {})
+                img_src = orig.get("source") or thumb.get("source")
+                if not img_src:
+                    continue
+                # Skip SVGs and tiny images (coat of arms, icons)
+                if img_src.lower().endswith(".svg"):
+                    continue
+                if orig.get("width", 0) < 400 and thumb.get("width", 0) < 400:
+                    continue
+                # Request a 1000px-wide thumbnail for fast loading
+                if "/commons/" in img_src and "/thumb/" not in img_src:
+                    img_src = img_src.replace(
+                        "/commons/", "/commons/thumb/"
+                    ) + "/1000px-" + img_src.rsplit("/", 1)[-1]
+                elif "/thumb/" in img_src:
+                    parts = img_src.rsplit("/", 1)
+                    img_src = parts[0] + "/1000px-" + parts[1].split("px-", 1)[-1]
+                return img_src
+        except Exception:
+            continue
+    return None
+
+
 @weather_bp.route("/api/city-image")
 async def city_image():
-    """Return a Wikipedia image URL for a city."""
-    city = request.args.get("city", "").strip()
-    if not city:
-        return jsonify({"url": None})
+    """Return a weather-aware image URL for a city with server-side caching."""
+    raw_city = request.args.get("city", "").strip()
+    if not raw_city:
+        return jsonify({"url": None, "attribution": None})
+
+    weather = request.args.get("weather", "").strip() or None
+    is_night = request.args.get("is_night", "0") == "1"
+    city = _resolve_city(raw_city)
+
+    # Check cache
+    cache_key = f"{city}:{weather}:{is_night}"
+    cached = _city_image_cache.get(cache_key)
+    if cached:
+        return jsonify({"url": cached["url"], "attribution": cached["attribution"]})
 
     async with aiohttp.ClientSession() as s:
-        # Try German Wikipedia first, then English
-        for lang in ("de", "en"):
-            url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{city}"
-            try:
-                async with s.get(url) as resp:
-                    if resp.status != 200:
-                        continue
-                    data = await resp.json()
-                    orig = data.get("originalimage", {})
-                    thumb = data.get("thumbnail", {})
-                    img_src = orig.get("source") or thumb.get("source")
-                    if not img_src:
-                        continue
-                    # Skip SVGs and tiny images (coat of arms, icons)
-                    if img_src.lower().endswith(".svg"):
-                        continue
-                    if orig.get("width", 0) < 400 and thumb.get("width", 0) < 400:
-                        continue
-                    # Request a 1000px-wide thumbnail for fast loading
-                    if "/commons/" in img_src and "/thumb/" not in img_src:
-                        # Convert direct file URL to thumbnail URL
-                        img_src = img_src.replace(
-                            "/commons/", "/commons/thumb/"
-                        ) + "/1000px-" + img_src.rsplit("/", 1)[-1]
-                    elif "/thumb/" in img_src:
-                        # Replace existing thumbnail width
-                        parts = img_src.rsplit("/", 1)
-                        img_src = parts[0] + "/1000px-" + parts[1].split("px-", 1)[-1]
-                    return jsonify({"url": img_src})
-            except Exception:
-                continue
+        # Try Unsplash first (weather-aware)
+        url, attribution = await _search_unsplash(s, city, weather, is_night)
 
-    return jsonify({"url": None})
+        # Fallback to Wikipedia
+        if not url:
+            url = await _search_wikipedia(s, city)
+            attribution = None
+
+    # Cache the result (even None to avoid repeated failed lookups)
+    _city_image_cache.put(cache_key, url, attribution)
+
+    return jsonify({"url": url, "attribution": attribution})
 
 
 @weather_bp.route("/api/reverse-geocode")
