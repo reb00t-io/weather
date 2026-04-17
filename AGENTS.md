@@ -64,6 +64,14 @@ For any change:
 - preserve existing public behavior unless the task requires otherwise
 - summarize what changed and any remaining risk
 
+**Always deploy and push.** Once tests pass and the change is complete:
+1. Commit the change on `main` with a concise message focused on the "why".
+2. Run `./scripts/deploy.sh` to deploy to the live environment.
+3. Only if deploy succeeds, `git push origin main`.
+4. If deploy fails: do NOT push. Report the failure and the deploy output so it can be investigated.
+
+This ordering (deploy → push) ensures `main` only ever reflects code that is actually running in production. Never push without deploying, and never push after a failed deploy.
+
 ## Repo-Specific Conventions
 
 - The app is Quart, not Flask. Do not reintroduce Flask terminology in docs unless the code actually changes.
