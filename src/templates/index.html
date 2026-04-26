@@ -385,8 +385,7 @@
       align-items: flex-start;
     }
 
-    /* Each text group gets its own soft glass pill so the area name
-       and the temperature read as separate cards on the photo. */
+    /* Glass pill for the location/date/source block. */
     .current-hero-pill {
       display: inline-flex;
       flex-direction: column;
@@ -395,8 +394,8 @@
       padding: 0.75rem 1rem;
       border-radius: 14px;
       background: rgba(15,23,42,0.3);
-      backdrop-filter: blur(4px) saturate(130%);
-      -webkit-backdrop-filter: blur(4px) saturate(130%);
+      backdrop-filter: blur(2px) saturate(120%);
+      -webkit-backdrop-filter: blur(2px) saturate(120%);
     }
 
 
@@ -429,66 +428,49 @@
       z-index: 2;
     }
 
-    /* Temp pill lays out the number and ° unit side-by-side at the
-       bottom of the card. The previous condition + feels lines were
-       dropped so the number stays the visual anchor. */
-    .current-hero-temp {
-      flex-direction: row;
-      align-items: baseline;
-      gap: 0.375rem;
-      margin-top: 0.875rem;
-      padding: 0.625rem 1.125rem;
-    }
-
-    .current-temp {
-      font-size: 4.5rem;
-      font-weight: 200;
-      line-height: 1;
-      letter-spacing: -3px;
-      text-shadow: 0 2px 12px rgba(0,0,0,0.5);
-    }
-
-    .current-temp-unit {
-      font-size: 1.75rem;
-      font-weight: 300;
-      opacity: 0.75;
-    }
-
+    /* Bottom row: temp tile + 3 detail tiles, all the same height. */
     .current-details {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 0.5rem;
       margin-top: 1.25rem;
       align-self: stretch;
+      align-items: stretch;
       position: relative;
       z-index: 1;
     }
 
     .current-detail {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
       text-align: center;
-      padding: 0.5rem 0.25rem;
+      padding: 0.625rem 0.375rem;
       background: rgba(15,23,42,0.3);
       border-radius: 10px;
-      backdrop-filter: blur(4px) saturate(130%);
-      -webkit-backdrop-filter: blur(4px) saturate(130%);
+      backdrop-filter: blur(2px) saturate(120%);
+      -webkit-backdrop-filter: blur(2px) saturate(120%);
     }
 
     .current-detail-icon { font-size: 1rem; margin-bottom: 0.125rem; }
     .current-detail-val { font-size: 0.8125rem; font-weight: 600; }
     .current-detail-label { font-size: 0.625rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    .current-feels {
-      font-size: 1.125rem;
+    /* Temperature tile: bigger headline value, no leading icon. */
+    .current-detail-temp-val {
+      font-size: 1.625rem;
       font-weight: 300;
-      opacity: 0.8;
-      margin-top: 0.125rem;
-      position: relative;
-      z-index: 1;
+      line-height: 1;
+      letter-spacing: -1px;
+      text-shadow: 0 1px 6px rgba(0,0,0,0.4);
+      margin-bottom: 0.125rem;
     }
-
-    .current-feels-val {
-      font-weight: 600;
-      font-size: 1.25rem;
+    .current-detail-temp-unit {
+      font-size: 0.875rem;
+      font-weight: 300;
+      opacity: 0.75;
+      margin-left: 1px;
     }
 
     .image-attribution {
@@ -953,7 +935,7 @@
     @media (max-width: 520px) {
       .app { max-width: 100%; }
 
-      .current-temp { font-size: 4rem; }
+      .current-detail-temp-val { font-size: 1.5rem; }
       .current-icon { font-size: 3rem; }
 
       .current-details {
@@ -1048,10 +1030,6 @@
               <div class="current-source" id="current-source" style="display:none"></div>
             </div>
             <div class="current-details" id="current-details"></div>
-            <div class="current-hero-pill current-hero-temp">
-              <div class="current-temp" id="current-temp"></div>
-              <div class="current-temp-unit">&deg;C</div>
-            </div>
           </div>
           <div class="image-attribution" id="image-attribution" style="display:none"></div>
         </div>
@@ -1448,7 +1426,6 @@
     const adminSuffix = city.admin1 && city.admin1 !== city.name ? ', ' + city.admin1 : '';
     $('current-location').textContent = city.name + adminSuffix;
     $('current-date').textContent = DAYS_F[now.getDay()] + ', ' + now.getDate() + '. ' + MON[now.getMonth()];
-    $('current-temp').textContent = Math.round(c.temp);
     $('current-icon').textContent = icon(c.icon, c.is_day);
 
     // Match the current hourly entry (used below for detail tiles).
@@ -1467,6 +1444,7 @@
     }
 
     $('current-details').innerHTML =
+      tempTile(Math.round(c.temp)) +
       detailCard('\uD83D\uDCA8', Math.round(c.wind || 0) + ' km/h', 'Wind') +
       detailCard('\uD83D\uDCA7', (ch.precip_prob ?? '--') + '%', 'Regen') +
       detailCard('\uD83D\uDCA6', (c.humidity ?? ch.humidity ?? '--') + '%', 'Feuchte');
@@ -1593,6 +1571,13 @@
       '<div class="current-detail-icon">' + ic + '</div>' +
       '<div class="current-detail-val">' + esc(val) + '</div>' +
       '<div class="current-detail-label">' + label + '</div></div>';
+  }
+
+  function tempTile(val) {
+    return '<div class="current-detail current-detail-temp">' +
+      '<div class="current-detail-temp-val">' + val +
+        '<span class="current-detail-temp-unit">°</span></div>' +
+      '<div class="current-detail-label">Temp</div></div>';
   }
 
   // ── Hourly (chart + items) ─────────────────────────────
@@ -1745,11 +1730,10 @@
 
 
   function selectHourDetails(h) {
-    $('current-temp').textContent = Math.round(h.temp);
     $('current-icon').textContent = icon(h.icon, h.is_day);
 
-    // Update detail cards
     $('current-details').innerHTML =
+      tempTile(Math.round(h.temp)) +
       detailCard('\uD83D\uDCA8', Math.round(h.wind || 0) + ' km/h ' + windDir(h.wind_dir), 'Wind') +
       detailCard('\uD83D\uDCA7', (h.precip_prob ?? '--') + '%', 'Regen') +
       detailCard('\uD83D\uDCA6', (h.humidity ?? '--') + '%', 'Feuchte');
