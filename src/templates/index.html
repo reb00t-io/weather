@@ -1598,18 +1598,18 @@
     const n = hourlyItems.length;
     if (!n) return;
 
-    const colW = 36;
+    const colW = 32;
     const padL = 12, padR = 12;
     const totalW = padL + n * colW + padR;
 
     const topArea = 18;
-    const iconArea = 20;
     const chartH = 130;
     const tempPad = 16;
     const botGap = 3;
     const botRowH = 14;
+    const iconArea = 20;
     const barPad = 3;
-    const H = topArea + iconArea + chartH + botGap + botRowH + botGap + botRowH + 4;
+    const H = topArea + chartH + botGap + botRowH + botGap + botRowH + botGap + iconArea + 4;
 
     let tMin = Infinity, tMax = -Infinity;
     for (const h of hourlyItems) {
@@ -1618,7 +1618,7 @@
     }
     const tRange = (tMax - tMin) || 1;
 
-    const curveTop = topArea + iconArea;
+    const curveTop = topArea;
     function yPos(temp) {
       const ratio = (temp - tMin) / tRange;
       return curveTop + chartH - tempPad - ratio * (chartH - 2 * tempPad);
@@ -1640,12 +1640,6 @@
       const cx = padL + i * colW + colW / 2;
       const label = i === 0 ? 'Jetzt' : pad(d.getHours()) + 'h';
       svg += '<text x="' + cx + '" y="13" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="600" font-family="inherit">' + label + '</text>';
-    });
-
-    // Weather icons
-    hourlyItems.forEach((h, i) => {
-      const cx = padL + i * colW + colW / 2;
-      svg += '<text x="' + cx + '" y="' + (topArea + 15) + '" text-anchor="middle" font-size="14">' + icon(h.icon, h.is_day) + '</text>';
     });
 
     // Temperature curve
@@ -1701,6 +1695,13 @@
       if (hasRain) {
         svg += '<text x="' + (x + w / 2) + '" y="' + (rainY + botRowH / 2 + 3) + '" text-anchor="middle" font-size="9">💧</text>';
       }
+    });
+
+    // Weather icons (bottom row)
+    const iconY = rainY + botRowH + botGap + 15;
+    hourlyItems.forEach((h, i) => {
+      const cx = padL + i * colW + colW / 2;
+      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="14">' + icon(h.icon, h.is_day) + '</text>';
     });
 
     // Invisible click targets (on top of everything)
@@ -1784,14 +1785,15 @@
     const n = daily.length;
     if (!n) { el.innerHTML = ''; return; }
 
-    const colW = 36;
+    const colW = 32;
     const padL = 12, padR = 12;
     const W = padL + n * colW + padR;
     const topArea = 36;   // day labels
     const chartH = 170;   // main chart area
     const botRowH = 14;   // each bottom row
     const botGap = 3;
-    const H = topArea + chartH + botGap + botRowH + botGap + botRowH + 4;
+    const iconArea = 20;  // weather pictogram row
+    const H = topArea + chartH + botGap + botRowH + botGap + botRowH + botGap + iconArea + 4;
 
     // Temp range
     let allMin = Infinity, allMax = -Infinity;
@@ -1913,6 +1915,13 @@
       if (hasRain) {
         svg += '<text x="' + (x + w / 2) + '" y="' + (rainY + botRowH / 2 + 3) + '" text-anchor="middle" font-size="9">\uD83D\uDCA7</text>';
       }
+    });
+
+    // Weather pictograms (bottom row)
+    const iconY = rainY + botRowH + botGap + 15;
+    daily.forEach((d, i) => {
+      const cx = padL + i * colW + colW / 2;
+      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="14">' + icon(d.icon, 1) + '</text>';
     });
 
     svg += '</svg>';
