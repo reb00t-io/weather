@@ -293,6 +293,54 @@ def _build_daily(daily_raw):
     return out
 
 
+def _icon_from_mosmix(bs_w):
+    """Derive (desc, icon) from MOSMIX numeric fields.
+
+    Bright Sky's `icon` string is coarse — it has no "mostly-clear"
+    variant, so 30-40% cloud cover always lands on "partly-cloudy-day".
+    Using `cloud_cover` directly recovers the finer WMO-aligned buckets:
+
+        <12%  oktas 0-1  clear
+        <38%  oktas 2-3  mostly-clear
+        <75%  oktas 4-5  partly-cloudy
+        >=75% oktas 6-8  overcast
+    """
+    cond = (bs_w.get("condition") or "dry").lower()
+    cloud = bs_w.get("cloud_cover")
+    precip = bs_w.get("precipitation") or 0
+
+    if cond == "thunderstorm":
+        return ("Gewitter mit Hagel", "thunderstorm-hail") if precip > 0 else ("Gewitter", "thunderstorm")
+    if cond == "snow":
+        if precip < 0.3:
+            return ("Leichter Schneefall", "snow-light")
+        if precip >= 2.0:
+            return ("Starker Schneefall", "snow-heavy")
+        return ("Schneefall", "snow")
+    if cond == "sleet":
+        return ("Schneeregen", "freezing-rain")
+    if cond == "hail":
+        return ("Gewitter mit Hagel", "thunderstorm-hail")
+    if cond == "rain":
+        if precip < 0.5:
+            return ("Leichter Regen", "rain-light")
+        if precip >= 2.5:
+            return ("Starker Regen", "rain-heavy")
+        return ("Regen", "rain")
+    if cond == "fog":
+        return ("Nebel", "fog")
+
+    if cloud is None:
+        return None
+    if cloud < 12:
+        return ("Klar", "clear")
+    if cloud < 38:
+        return ("Überwiegend klar", "mostly-clear")
+    if cloud < 75:
+        return ("Teilweise bewölkt", "partly-cloudy")
+    return ("Bewölkt", "overcast")
+
+
 def _overlay_mosmix(hourly, bs_index):
     """Replace ICON values with MOSMIX where Bright Sky has data."""
     for h in hourly:
@@ -311,9 +359,9 @@ def _overlay_mosmix(hourly, bs_index):
             v = bs_w.get(src_key)
             if v is not None:
                 h[dst_key] = v
-        bs_icon = bs_w.get("icon")
-        if bs_icon and bs_icon in BRIGHTSKY_ICON_MAP:
-            desc, our_icon = BRIGHTSKY_ICON_MAP[bs_icon]
+        mapped = _icon_from_mosmix(bs_w)
+        if mapped:
+            desc, our_icon = mapped
             h["icon"] = our_icon
             h["desc"] = desc
         h["source"] = "mosmix"

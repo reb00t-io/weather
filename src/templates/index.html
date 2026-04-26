@@ -309,6 +309,9 @@
       color: #fff;
       background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%);
       box-shadow: 0 8px 32px rgba(59, 130, 246, 0.25);
+      min-height: 420px;
+      display: flex;
+      flex-direction: column;
     }
 
     .current-card-bg {
@@ -321,12 +324,22 @@
       z-index: 0;
     }
 
-    .current-card-bg.loaded { opacity: 0.55; }
+    .current-card-bg.loaded { opacity: 0.85; }
 
+    /* Gradient: clean at top so the skyline/landmark is visible,
+       darken sharply at the bottom so the hero text stays legible
+       on any image. */
     .current-card-overlay {
       position: absolute;
       inset: 0;
-      background: linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.15) 40%, rgba(0,0,0,0.4) 100%);
+      background: linear-gradient(
+        to bottom,
+        rgba(0,0,0,0.15) 0%,
+        rgba(0,0,0,0) 25%,
+        rgba(0,0,0,0) 45%,
+        rgba(0,0,0,0.55) 75%,
+        rgba(0,0,0,0.85) 100%
+      );
       z-index: 0;
     }
 
@@ -362,46 +375,51 @@
       border-radius: 50%;
     }
 
-    .current-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
+    /* Hero text block — pinned to the bottom of the card so the
+       upper portion of the city image (skyline, landmarks) stays
+       unobscured. */
+    .current-hero {
+      margin-top: auto;
       position: relative;
       z-index: 1;
     }
 
     .current-location {
-      font-size: 1.25rem;
+      font-size: 1.5rem;
       font-weight: 700;
       line-height: 1.2;
-      text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+      text-shadow: 0 1px 4px rgba(0,0,0,0.6);
     }
 
     .current-date {
-      font-size: 0.75rem;
-      opacity: 0.75;
-      margin-top: 0.25rem;
+      font-size: 0.8125rem;
+      opacity: 0.85;
+      margin-top: 0.125rem;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.5);
     }
 
     .current-source {
-      font-size: 0.625rem;
-      opacity: 0.55;
+      font-size: 0.6875rem;
+      opacity: 0.7;
       margin-top: 0.125rem;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.5);
     }
 
     .current-icon {
+      position: absolute;
+      top: 1.25rem;
+      right: 1.5rem;
       font-size: 3.5rem;
       line-height: 1;
-      filter: drop-shadow(0 4px 8px rgba(0,0,0,0.15));
+      filter: drop-shadow(0 4px 12px rgba(0,0,0,0.4));
+      z-index: 2;
     }
 
     .current-temp-row {
       display: flex;
       align-items: baseline;
       gap: 0.5rem;
-      margin-top: 0.75rem;
-      position: relative;
-      z-index: 1;
+      margin-top: 0.5rem;
     }
 
     .current-temp {
@@ -1012,20 +1030,18 @@
         <div class="current-card" id="current-card">
           <div class="current-card-bg" id="current-card-bg"></div>
           <div class="current-card-overlay"></div>
-          <div class="current-top">
-            <div>
-              <div class="current-location" id="current-location"></div>
-              <div class="current-date" id="current-date"></div>
-              <div class="current-source" id="current-source" style="display:none"></div>
+          <div class="current-icon" id="current-icon"></div>
+          <div class="current-hero">
+            <div class="current-location" id="current-location"></div>
+            <div class="current-date" id="current-date"></div>
+            <div class="current-source" id="current-source" style="display:none"></div>
+            <div class="current-temp-row">
+              <div class="current-temp" id="current-temp"></div>
+              <div class="current-temp-unit">&deg;C</div>
             </div>
-            <div class="current-icon" id="current-icon"></div>
+            <div class="current-desc" id="current-desc"></div>
+            <div class="current-feels" id="current-feels"></div>
           </div>
-          <div class="current-temp-row">
-            <div class="current-temp" id="current-temp"></div>
-            <div class="current-temp-unit">&deg;C</div>
-          </div>
-          <div class="current-desc" id="current-desc"></div>
-          <div class="current-feels" id="current-feels"></div>
           <div class="current-details" id="current-details"></div>
           <div class="image-attribution" id="image-attribution" style="display:none"></div>
         </div>
