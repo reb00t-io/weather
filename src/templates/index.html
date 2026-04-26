@@ -457,20 +457,24 @@
     .current-detail-val { font-size: 0.8125rem; font-weight: 600; }
     .current-detail-label { font-size: 0.625rem; opacity: 0.7; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* Temperature tile: bigger headline value, no leading icon. */
+    /* Temperature tile: number fills the pill height — no icon, no
+       label, just the value as the visual anchor of the bottom row. */
+    .current-detail-temp {
+      padding: 0.25rem 0.375rem;
+    }
     .current-detail-temp-val {
-      font-size: 1.625rem;
+      font-size: 2.5rem;
       font-weight: 300;
       line-height: 1;
-      letter-spacing: -1px;
-      text-shadow: 0 1px 6px rgba(0,0,0,0.4);
-      margin-bottom: 0.125rem;
+      letter-spacing: -2px;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.45);
     }
     .current-detail-temp-unit {
-      font-size: 0.875rem;
+      font-size: 1.125rem;
       font-weight: 300;
-      opacity: 0.75;
+      opacity: 0.7;
       margin-left: 1px;
+      letter-spacing: 0;
     }
 
     .image-attribution {
@@ -935,7 +939,7 @@
     @media (max-width: 520px) {
       .app { max-width: 100%; }
 
-      .current-detail-temp-val { font-size: 1.5rem; }
+      .current-detail-temp-val { font-size: 2.25rem; }
       .current-icon { font-size: 3rem; }
 
       .current-details {
@@ -1576,8 +1580,7 @@
   function tempTile(val) {
     return '<div class="current-detail current-detail-temp">' +
       '<div class="current-detail-temp-val">' + val +
-        '<span class="current-detail-temp-unit">°</span></div>' +
-      '<div class="current-detail-label">Temp</div></div>';
+        '<span class="current-detail-temp-unit">°</span></div></div>';
   }
 
   // ── Hourly (chart + items) ─────────────────────────────
