@@ -550,7 +550,11 @@ async def weather():
         ]),
         "current_weather": "true",
         "timezone": "Europe/Berlin",
-        "forecast_days": 14,
+        "forecast_days": 7,
+        # DWD ICON seamless: ICON-D2 (2km) for 0-48h, ICON-EU (7km) to ~5d,
+        # ICON global beyond. Most accurate model chain for Germany; tops
+        # out at ~7.5 days, which is why forecast_days is 7.
+        "models": "icon_seamless",
     }
 
     # Fetch all data sources in parallel
