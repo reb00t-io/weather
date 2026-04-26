@@ -1319,7 +1319,7 @@
     div.innerHTML =
       '<svg class="recent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
       '<div class="recent-info"><div class="search-result-name">' + esc(city.name) + '</div>' +
-      '<div class="search-result-region">' + esc([city.admin1, city.country].filter(Boolean).join(', ')) + '</div></div>' +
+      '<div class="search-result-region">' + esc([city.admin1 !== city.name ? city.admin1 : null, city.country].filter(Boolean).join(', ')) + '</div></div>' +
       '<button class="recent-delete" aria-label="Entfernen"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
     div.querySelector('.recent-info').addEventListener('click', () => selectCity(city));
     div.querySelector('.recent-icon').addEventListener('click', () => selectCity(city));
@@ -1390,7 +1390,7 @@
         const div = document.createElement('div');
         div.className = 'search-result-item';
         div.innerHTML = '<div class="search-result-name">' + esc(r.name) + '</div>' +
-          '<div class="search-result-region">' + esc([r.admin1, r.country].filter(Boolean).join(', ')) + '</div>';
+          '<div class="search-result-region">' + esc([r.admin1 !== r.name ? r.admin1 : null, r.country].filter(Boolean).join(', ')) + '</div>';
         div.addEventListener('click', () => selectCity(r));
         searchResults.appendChild(div);
       }
@@ -1444,7 +1444,8 @@
     // Dynamic gradient
     card.className = 'current-card fade-in ' + condClass(c.icon, c.is_day);
 
-    $('current-location').textContent = city.name + (city.admin1 ? ', ' + city.admin1 : '');
+    const adminSuffix = city.admin1 && city.admin1 !== city.name ? ', ' + city.admin1 : '';
+    $('current-location').textContent = city.name + adminSuffix;
     $('current-date').textContent = DAYS_F[now.getDay()] + ', ' + now.getDate() + '. ' + MON[now.getMonth()];
     $('current-temp').textContent = Math.round(c.temp);
     $('current-icon').textContent = icon(c.icon, c.is_day);
