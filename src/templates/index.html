@@ -1900,14 +1900,13 @@
       const x = padL + i * colW + barPad;
       const w = colW - barPad * 2;
 
-      // Compute sun fraction from sun_hours / daylight_hours
+      // Sun bar color: drive from mean cloud cover so it matches the
+      // hourly chart. Open-Meteo's sunshine_duration sits at ~daylight
+      // on most days, so it can't differentiate cloudy days.
+      const sunFrac = d.cloud_mean != null
+        ? sunLevelFromCloud(d.cloud_mean)
+        : sunLevelFromIcon(d.icon || '');
       const sunH = d.sun_hours || 0;
-      let daylightH = 14; // fallback
-      if (d.sunrise && d.sunset) {
-        const sr = new Date(d.sunrise), ss = new Date(d.sunset);
-        daylightH = Math.max(1, (ss - sr) / 3600000);
-      }
-      const sunFrac = Math.min(1, sunH / daylightH);
 
       // Sunshine bar with hours label
       svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="' + sunBarColor(sunFrac) + '"/>';
