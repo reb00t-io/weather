@@ -373,23 +373,32 @@
       border-radius: 50%;
     }
 
-    /* Hero pinned to the bottom of the card — image breathes above. */
+    /* Hero pinned to the bottom of the card — image breathes above.
+       Flex column so each glass pill sizes to its own content width
+       instead of stretching full-card. */
     .current-hero {
       margin-top: auto;
       position: relative;
       z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
     }
 
-    /* Just the text block gets a soft frosted pill so it stays legible
-       on any city image without obscuring the skyline above it. */
-    .current-hero-text {
+    /* Each text group gets its own soft glass pill so the area name
+       and the temperature read as separate cards on the photo. */
+    .current-hero-pill {
       display: inline-block;
       align-self: flex-start;
-      padding: 0.875rem 1.125rem;
-      border-radius: 16px;
-      background: rgba(15,23,42,0.32);
-      backdrop-filter: blur(8px) saturate(140%);
-      -webkit-backdrop-filter: blur(8px) saturate(140%);
+      padding: 0.75rem 1rem;
+      border-radius: 14px;
+      background: rgba(15,23,42,0.3);
+      backdrop-filter: blur(4px) saturate(130%);
+      -webkit-backdrop-filter: blur(4px) saturate(130%);
+    }
+
+    .current-hero-temp {
+      margin-top: 0.625rem;
     }
 
     .current-location {
@@ -457,6 +466,7 @@
       grid-template-columns: repeat(4, 1fr);
       gap: 0.5rem;
       margin-top: 1.25rem;
+      align-self: stretch;
       position: relative;
       z-index: 1;
     }
@@ -464,10 +474,10 @@
     .current-detail {
       text-align: center;
       padding: 0.5rem 0.25rem;
-      background: rgba(15,23,42,0.32);
+      background: rgba(15,23,42,0.3);
       border-radius: 10px;
-      backdrop-filter: blur(8px) saturate(140%);
-      -webkit-backdrop-filter: blur(8px) saturate(140%);
+      backdrop-filter: blur(4px) saturate(130%);
+      -webkit-backdrop-filter: blur(4px) saturate(130%);
     }
 
     .current-detail-icon { font-size: 1rem; margin-bottom: 0.125rem; }
@@ -1039,10 +1049,12 @@
           <div class="current-card-overlay"></div>
           <div class="current-icon" id="current-icon"></div>
           <div class="current-hero">
-            <div class="current-hero-text">
+            <div class="current-hero-pill">
               <div class="current-location" id="current-location"></div>
               <div class="current-date" id="current-date"></div>
               <div class="current-source" id="current-source" style="display:none"></div>
+            </div>
+            <div class="current-hero-pill current-hero-temp">
               <div class="current-temp-row">
                 <div class="current-temp" id="current-temp"></div>
                 <div class="current-temp-unit">&deg;C</div>
