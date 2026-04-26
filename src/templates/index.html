@@ -309,7 +309,7 @@
       color: #fff;
       background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%);
       box-shadow: 0 8px 32px rgba(59, 130, 246, 0.25);
-      min-height: 420px;
+      min-height: 480px;
       display: flex;
       flex-direction: column;
     }
@@ -326,19 +326,16 @@
 
     .current-card-bg.loaded { opacity: 0.85; }
 
-    /* Gradient: clean at top so the skyline/landmark is visible,
-       darken sharply at the bottom so the hero text stays legible
-       on any image. */
+    /* Soft top fade so the icon in the corner reads on bright skies.
+       Bottom legibility is handled by the frosted .current-hero band. */
     .current-card-overlay {
       position: absolute;
       inset: 0;
       background: linear-gradient(
         to bottom,
-        rgba(0,0,0,0.15) 0%,
-        rgba(0,0,0,0) 25%,
-        rgba(0,0,0,0) 45%,
-        rgba(0,0,0,0.55) 75%,
-        rgba(0,0,0,0.85) 100%
+        rgba(0,0,0,0.25) 0%,
+        rgba(0,0,0,0) 30%,
+        rgba(0,0,0,0) 100%
       );
       z-index: 0;
     }
@@ -375,34 +372,42 @@
       border-radius: 50%;
     }
 
-    /* Hero text block — pinned to the bottom of the card so the
-       upper portion of the city image (skyline, landmarks) stays
-       unobscured. */
+    /* Frosted-glass band pinned to the bottom of the card. The blur
+       reads whatever's behind it (the city image), so the text plate
+       feels integrated with the photo rather than pasted on top. */
     .current-hero {
-      margin-top: auto;
+      margin: auto -1.5rem -1.5rem;
+      padding: 1.25rem 1.5rem 1.25rem;
       position: relative;
       z-index: 1;
+      background: linear-gradient(
+        to bottom,
+        rgba(15,23,42,0.55) 0%,
+        rgba(15,23,42,0.72) 100%
+      );
+      backdrop-filter: blur(18px) saturate(150%);
+      -webkit-backdrop-filter: blur(18px) saturate(150%);
     }
+
+    .current-hero-text { position: relative; }
 
     .current-location {
       font-size: 1.5rem;
       font-weight: 700;
       line-height: 1.2;
-      text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+      text-shadow: 0 2px 8px rgba(0,0,0,0.5);
     }
 
     .current-date {
       font-size: 0.8125rem;
-      opacity: 0.85;
+      opacity: 0.9;
       margin-top: 0.125rem;
-      text-shadow: 0 1px 3px rgba(0,0,0,0.5);
     }
 
     .current-source {
       font-size: 0.6875rem;
-      opacity: 0.7;
+      opacity: 0.75;
       margin-top: 0.125rem;
-      text-shadow: 0 1px 3px rgba(0,0,0,0.5);
     }
 
     .current-icon {
@@ -427,7 +432,7 @@
       font-weight: 200;
       line-height: 1;
       letter-spacing: -3px;
-      text-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      text-shadow: 0 2px 12px rgba(0,0,0,0.5);
     }
 
     .current-temp-unit {
@@ -458,9 +463,9 @@
     .current-detail {
       text-align: center;
       padding: 0.5rem 0.25rem;
-      background: rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.06);
       border-radius: 10px;
-      backdrop-filter: blur(4px);
     }
 
     .current-detail-icon { font-size: 1rem; margin-bottom: 0.125rem; }
@@ -1032,17 +1037,19 @@
           <div class="current-card-overlay"></div>
           <div class="current-icon" id="current-icon"></div>
           <div class="current-hero">
-            <div class="current-location" id="current-location"></div>
-            <div class="current-date" id="current-date"></div>
-            <div class="current-source" id="current-source" style="display:none"></div>
-            <div class="current-temp-row">
-              <div class="current-temp" id="current-temp"></div>
-              <div class="current-temp-unit">&deg;C</div>
+            <div class="current-hero-text">
+              <div class="current-location" id="current-location"></div>
+              <div class="current-date" id="current-date"></div>
+              <div class="current-source" id="current-source" style="display:none"></div>
+              <div class="current-temp-row">
+                <div class="current-temp" id="current-temp"></div>
+                <div class="current-temp-unit">&deg;C</div>
+              </div>
+              <div class="current-desc" id="current-desc"></div>
+              <div class="current-feels" id="current-feels"></div>
             </div>
-            <div class="current-desc" id="current-desc"></div>
-            <div class="current-feels" id="current-feels"></div>
+            <div class="current-details" id="current-details"></div>
           </div>
-          <div class="current-details" id="current-details"></div>
           <div class="image-attribution" id="image-attribution" style="display:none"></div>
         </div>
 
