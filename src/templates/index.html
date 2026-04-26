@@ -1750,17 +1750,26 @@
       detailCard('\u2601\uFE0F', (h.cloud ?? '--') + '%', 'Wolken');
   }
 
-  // ── Sun bar: 3 discrete colors ──
-  const SUN_RGB = 'rgb(255,210,60)';
-  const MIXED_RGB = 'rgb(255,230,110)';
-  const CLOUD_RGB = 'rgb(200,200,200)';
+  // ── Sun bar: smooth interpolation through 3 stops ──
+  const SUN_C = [255, 210, 60];
+  const MIXED_C = [255, 230, 110];
+  const CLOUD_C = [200, 200, 200];
 
-  // sun = 0..1 (fraction of daylight hours with sun)
-  // >= 0.5 -> sunny, <= ~0.07 (1hr/14hr) -> clouds, otherwise mixed
+  function lerpColor(a, b, t) {
+    return [
+      Math.round(a[0] + (b[0] - a[0]) * t),
+      Math.round(a[1] + (b[1] - a[1]) * t),
+      Math.round(a[2] + (b[2] - a[2]) * t),
+    ];
+  }
+
+  // sun = 0..1 (fraction of sun). Lerp grey → light-yellow → sun-yellow.
   function sunBarColor(sun) {
-    if (sun >= 0.5) return SUN_RGB;
-    if (sun <= 0.07) return CLOUD_RGB;
-    return MIXED_RGB;
+    const s = Math.max(0, Math.min(1, sun || 0));
+    const c = s <= 0.5
+      ? lerpColor(CLOUD_C, MIXED_C, s / 0.5)
+      : lerpColor(MIXED_C, SUN_C, (s - 0.5) / 0.5);
+    return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
   }
 
   function sunLevelFromCloud(cloud) {
