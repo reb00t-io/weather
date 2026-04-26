@@ -8,7 +8,7 @@ import re
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import aiohttp
@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 weather_bp = Blueprint("weather", __name__)
 
 UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY")
+
+# Wikipedia requires a descriptive User-Agent per their robot policy
+# (https://w.wiki/4wJS) — anonymous requests now return 403.
+WIKIPEDIA_UA = "WeatherApp/1.0 (https://weather.reb00t.io; marko@rosenmueller.de)"
 
 # ── Persistent city image cache (SQLite) ──────────────────
 _CACHE_TTL = 86400  # 24 hours
@@ -129,6 +133,7 @@ OPEN_METEO_FORECAST = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_GEOCODE = "https://geocoding-api.open-meteo.com/v1/search"
 OPEN_METEO_AQI = "https://air-quality-api.open-meteo.com/v1/air-quality"
 BRIGHTSKY_CURRENT = "https://api.brightsky.dev/current_weather"
+BRIGHTSKY_WEATHER = "https://api.brightsky.dev/weather"
 DWD_WARNINGS = "https://api.brightsky.dev/alerts"
 
 # WMO weather code -> (description, icon name)
@@ -213,6 +218,105 @@ async def _fetch_brightsky(session, lat, lon):
     except Exception as e:
         logger.debug("Bright Sky fetch failed: %s", e)
         return None
+
+
+async def _fetch_brightsky_hourly(session, lat, lon, hours_ahead=49):
+    """Fetch hourly forecast (MOSMIX) from Bright Sky for the next ~48h.
+
+    MOSMIX is DWD's official station-anchored statistical forecast — for
+    German locations it's typically more accurate in the short range than
+    raw model output, since it's post-processed against actual station
+    observations. We use it to overlay Open-Meteo's ICON values for the
+    next 48 hours.
+    """
+    now = datetime.now(timezone.utc)
+    last = now + timedelta(hours=hours_ahead)
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "date": now.strftime("%Y-%m-%dT%H:00"),
+        "last_date": last.strftime("%Y-%m-%dT%H:00"),
+        "tz": "Europe/Berlin",
+        "units": "dwd",
+    }
+    try:
+        async with session.get(BRIGHTSKY_WEATHER, params=params) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.json()
+    except Exception as e:
+        logger.debug("Bright Sky hourly fetch failed: %s", e)
+        return None
+
+
+def _index_brightsky_hourly(bs_hourly):
+    """Index MOSMIX records by 'YYYY-MM-DDTHH:00' to match Open-Meteo keys."""
+    if not bs_hourly or "weather" not in bs_hourly:
+        return {}
+    out = {}
+    for w in bs_hourly["weather"]:
+        ts = w.get("timestamp")
+        if not ts or len(ts) < 13:
+            continue
+        # "2026-04-26T17:00:00+02:00" -> "2026-04-26T17:00"
+        out[ts[:13] + ":00"] = w
+    return out
+
+
+def _build_daily(daily_raw):
+    """Convert an Open-Meteo daily payload into our daily[] list."""
+    times = daily_raw.get("time", [])
+    n = len(times)
+    out = []
+    for i, t in enumerate(times):
+        code = daily_raw.get("weathercode", [None] * n)[i]
+        info = _weather_code_info(code)
+        out.append({
+            "date": t,
+            "temp_max": daily_raw.get("temperature_2m_max", [])[i],
+            "temp_min": daily_raw.get("temperature_2m_min", [])[i],
+            "feels_max": daily_raw.get("apparent_temperature_max", [])[i],
+            "feels_min": daily_raw.get("apparent_temperature_min", [])[i],
+            "precip_sum": daily_raw.get("precipitation_sum", [])[i],
+            "precip_prob": daily_raw.get("precipitation_probability_max", [])[i],
+            "wind_max": daily_raw.get("windspeed_10m_max", [])[i],
+            "wind_dir": daily_raw.get("winddirection_10m_dominant", [])[i],
+            "sunrise": daily_raw.get("sunrise", [])[i],
+            "sunset": daily_raw.get("sunset", [])[i],
+            "uv_max": daily_raw.get("uv_index_max", [])[i],
+            "sun_hours": round((daily_raw.get("sunshine_duration", [0] * n)[i] or 0) / 3600, 1),
+            "cloud_mean": daily_raw.get("cloud_cover_mean", [None] * n)[i],
+            "code": code,
+            "icon": info["icon"],
+            "desc": info["description"],
+        })
+    return out
+
+
+def _overlay_mosmix(hourly, bs_index):
+    """Replace ICON values with MOSMIX where Bright Sky has data."""
+    for h in hourly:
+        bs_w = bs_index.get(h["time"])
+        if not bs_w:
+            continue
+        for src_key, dst_key in (
+            ("temperature", "temp"),
+            ("precipitation_probability", "precip_prob"),
+            ("precipitation", "precip"),
+            ("wind_speed", "wind"),
+            ("wind_direction", "wind_dir"),
+            ("relative_humidity", "humidity"),
+            ("cloud_cover", "cloud"),
+        ):
+            v = bs_w.get(src_key)
+            if v is not None:
+                h[dst_key] = v
+        bs_icon = bs_w.get("icon")
+        if bs_icon and bs_icon in BRIGHTSKY_ICON_MAP:
+            desc, our_icon = BRIGHTSKY_ICON_MAP[bs_icon]
+            h["icon"] = our_icon
+            h["desc"] = desc
+        h["source"] = "mosmix"
 
 
 async def _fetch_aqi(session, lat, lon):
@@ -418,10 +522,13 @@ async def _search_unsplash(session, city: str, weather: str | None, is_night: bo
 
 async def _search_wikipedia(session, city: str):
     """Search Wikipedia for a city image. Returns URL or None."""
-    for lang in ("de", "en"):
+    headers = {"User-Agent": WIKIPEDIA_UA}
+    # Try English first — German Wikipedia tends to return flags / coats-of-arms
+    # for German cities (rendered as .svg.png), while English has actual photos.
+    for lang in ("en", "de"):
         url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{city}"
         try:
-            async with session.get(url) as resp:
+            async with session.get(url, headers=headers) as resp:
                 if resp.status != 200:
                     continue
                 data = await resp.json()
@@ -430,19 +537,22 @@ async def _search_wikipedia(session, city: str):
                 img_src = orig.get("source") or thumb.get("source")
                 if not img_src:
                     continue
-                # Skip SVGs and tiny images (coat of arms, icons)
-                if img_src.lower().endswith(".svg"):
+                # Skip SVGs (and SVGs rendered to PNG, e.g. flags & coats of arms)
+                src_lower = img_src.lower()
+                if src_lower.endswith(".svg") or ".svg/" in src_lower:
                     continue
                 if orig.get("width", 0) < 400 and thumb.get("width", 0) < 400:
                     continue
-                # Request a 1000px-wide thumbnail for fast loading
+                # Rewrite to a 1280px-wide thumbnail. Wikimedia rejects
+                # arbitrary widths (HTTP 400, "use thumbnail steps"); 1280 is
+                # one of the always-allowed standard sizes.
                 if "/commons/" in img_src and "/thumb/" not in img_src:
                     img_src = img_src.replace(
                         "/commons/", "/commons/thumb/"
-                    ) + "/1000px-" + img_src.rsplit("/", 1)[-1]
+                    ) + "/1280px-" + img_src.rsplit("/", 1)[-1]
                 elif "/thumb/" in img_src:
                     parts = img_src.rsplit("/", 1)
-                    img_src = parts[0] + "/1000px-" + parts[1].split("px-", 1)[-1]
+                    img_src = parts[0] + "/1280px-" + parts[1].split("px-", 1)[-1]
                 return img_src
         except Exception:
             continue
@@ -557,11 +667,23 @@ async def weather():
         "models": "icon_seamless",
     }
 
+    # Long-range daily forecast for days 8-14, where DWD ICON has no data.
+    # Uses Open-Meteo's best_match blend (typically ECMWF/GFS at this horizon).
+    om_long_params = {
+        "latitude": lat,
+        "longitude": lon,
+        "daily": om_params["daily"],
+        "timezone": "Europe/Berlin",
+        "forecast_days": 14,
+    }
+
     # Fetch all data sources in parallel
     async with aiohttp.ClientSession() as s:
-        om_data, bs_data, aqi_data, warn_data = await asyncio.gather(
+        om_data, om_long_data, bs_data, bs_hourly_data, aqi_data, warn_data = await asyncio.gather(
             _fetch_openmeteo(s, om_params),
+            _fetch_openmeteo(s, om_long_params),
             _fetch_brightsky(s, lat, lon),
+            _fetch_brightsky_hourly(s, lat, lon),
             _fetch_aqi(s, lat, lon),
             _fetch_warnings(s, lat, lon),
         )
@@ -595,6 +717,9 @@ async def weather():
         }
 
     # ── Hourly forecast ─────────────────────────────────────
+    # Base from DWD ICON-seamless, then overlay MOSMIX (DWD's official
+    # station-anchored statistical forecast) for the next 48h. MOSMIX is
+    # typically more accurate than raw model output for the short range.
     hourly_raw = om_data.get("hourly", {})
     times = hourly_raw.get("time", [])
     hourly = []
@@ -615,34 +740,24 @@ async def weather():
             "code": code,
             "icon": info["icon"],
             "desc": info["description"],
+            "source": "icon",
         })
 
+    bs_index = _index_brightsky_hourly(bs_hourly_data)
+    if bs_index:
+        _overlay_mosmix(hourly, bs_index)
+
     # ── Daily forecast ──────────────────────────────────────
-    daily_raw = om_data.get("daily", {})
-    daily_times = daily_raw.get("time", [])
-    daily = []
-    for i, t in enumerate(daily_times):
-        code = daily_raw.get("weathercode", [None] * len(daily_times))[i]
-        info = _weather_code_info(code)
-        daily.append({
-            "date": t,
-            "temp_max": daily_raw.get("temperature_2m_max", [])[i],
-            "temp_min": daily_raw.get("temperature_2m_min", [])[i],
-            "feels_max": daily_raw.get("apparent_temperature_max", [])[i],
-            "feels_min": daily_raw.get("apparent_temperature_min", [])[i],
-            "precip_sum": daily_raw.get("precipitation_sum", [])[i],
-            "precip_prob": daily_raw.get("precipitation_probability_max", [])[i],
-            "wind_max": daily_raw.get("windspeed_10m_max", [])[i],
-            "wind_dir": daily_raw.get("winddirection_10m_dominant", [])[i],
-            "sunrise": daily_raw.get("sunrise", [])[i],
-            "sunset": daily_raw.get("sunset", [])[i],
-            "uv_max": daily_raw.get("uv_index_max", [])[i],
-            "sun_hours": round((daily_raw.get("sunshine_duration", [0] * len(daily_times))[i] or 0) / 3600, 1),
-            "cloud_mean": daily_raw.get("cloud_cover_mean", [None] * len(daily_times))[i],
-            "code": code,
-            "icon": info["icon"],
-            "desc": info["description"],
-        })
+    # Days 0-6 from DWD ICON-seamless (high accuracy, Germany-focused).
+    # Days 7-13 from Open-Meteo best_match (ECMWF/GFS blend) since ICON
+    # only forecasts ~7.5 days.
+    daily = _build_daily(om_data.get("daily", {}))
+    if om_long_data:
+        long_daily = _build_daily(om_long_data.get("daily", {}))
+        existing_dates = {d["date"] for d in daily}
+        for d in long_daily:
+            if d["date"] not in existing_dates:
+                daily.append(d)
 
     return jsonify({
         "current": current_out,
