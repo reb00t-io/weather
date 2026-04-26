@@ -1598,15 +1598,19 @@
     const n = hourlyItems.length;
     if (!n) return;
 
-    const colW = 56;
-    const curveH = 80;
-    const sunBarH = 8;
-    const sunGap = 4;
-    const chartH = curveH + sunGap + sunBarH;
-    const padTop = 18, padBot = 6;
-    const totalW = n * colW;
+    const colW = 36;
+    const padL = 12, padR = 12;
+    const totalW = padL + n * colW + padR;
 
-    // Temp range
+    const topArea = 18;
+    const iconArea = 20;
+    const chartH = 130;
+    const tempPad = 16;
+    const botGap = 3;
+    const botRowH = 14;
+    const barPad = 3;
+    const H = topArea + iconArea + chartH + botGap + botRowH + botGap + botRowH + 4;
+
     let tMin = Infinity, tMax = -Infinity;
     for (const h of hourlyItems) {
       if (h.temp < tMin) tMin = h.temp;
@@ -1614,95 +1618,113 @@
     }
     const tRange = (tMax - tMin) || 1;
 
+    const curveTop = topArea + iconArea;
     function yPos(temp) {
       const ratio = (temp - tMin) / tRange;
-      return padTop + (curveH - padTop - padBot) * (1 - ratio);
+      return curveTop + chartH - tempPad - ratio * (chartH - 2 * tempPad);
     }
 
-    // Build SVG chart
-    const pts = hourlyItems.map((h, i) => ({
-      x: i * colW + colW / 2,
-      y: yPos(h.temp),
-      val: Math.round(h.temp)
-    }));
+    let svg = '<svg class="hourly-chart-svg" width="' + totalW + '" height="' + H + '" viewBox="0 0 ' + totalW + ' ' + H + '">';
 
-    let svg = '<svg class="hourly-chart-svg" width="' + totalW + '" height="' + chartH + '" viewBox="0 0 ' + totalW + ' ' + chartH + '">';
-
-    // Gradient fill under the line
     svg += '<defs><linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">';
     svg += '<stop offset="0%" stop-color="rgba(59,130,246,0.25)"/>';
     svg += '<stop offset="100%" stop-color="rgba(59,130,246,0)"/>';
     svg += '</linearGradient></defs>';
 
-    // Area fill
-    let areaPath = 'M' + pts[0].x + ',' + pts[0].y;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[Math.max(0, i - 1)];
-      const p1 = pts[i];
-      const p2 = pts[i + 1];
-      const p3 = pts[Math.min(pts.length - 1, i + 2)];
-      const t = 0.3;
-      areaPath += ' C' + (p1.x + (p2.x - p0.x) * t) + ',' + (p1.y + (p2.y - p0.y) * t) +
-        ' ' + (p2.x - (p3.x - p1.x) * t) + ',' + (p2.y - (p3.y - p1.y) * t) +
-        ' ' + p2.x + ',' + p2.y;
-    }
-    svg += '<path d="' + areaPath + ' V' + curveH + ' H' + pts[0].x + ' Z" fill="url(#hg)"/>';
+    // Selection highlight (behind everything)
+    svg += '<rect id="hourly-sel-bg" x="' + padL + '" y="0" width="' + colW + '" height="' + H + '" fill="rgba(59,130,246,0.12)" rx="4"/>';
 
-    // Line
-    svg += '<path d="' + areaPath + '" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/>';
-
-    // Dots + temp labels
-    pts.forEach(p => {
-      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="3" fill="#60a5fa"/>';
-      svg += '<text x="' + p.x + '" y="' + (p.y - 7) + '" text-anchor="middle" fill="#f1f5f9" font-size="10" font-weight="700" font-family="inherit">' + p.val + '\u00B0</text>';
+    // Hour labels
+    hourlyItems.forEach((h, i) => {
+      const d = new Date(h.time);
+      const cx = padL + i * colW + colW / 2;
+      const label = i === 0 ? 'Jetzt' : pad(d.getHours()) + 'h';
+      svg += '<text x="' + cx + '" y="13" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="600" font-family="inherit">' + label + '</text>';
     });
 
-    // Sun level bars
-    const sunY = curveH + sunGap;
+    // Weather icons
     hourlyItems.forEach((h, i) => {
-      const x = i * colW + 3;
-      const w = colW - 6;
+      const cx = padL + i * colW + colW / 2;
+      svg += '<text x="' + cx + '" y="' + (topArea + 15) + '" text-anchor="middle" font-size="14">' + icon(h.icon, h.is_day) + '</text>';
+    });
+
+    // Temperature curve
+    const pts = hourlyItems.map((h, i) => ({
+      x: padL + i * colW + colW / 2,
+      y: yPos(h.temp),
+      val: Math.round(h.temp)
+    }));
+
+    if (pts.length >= 2) {
+      let areaPath = 'M' + pts[0].x + ',' + pts[0].y;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i - 1)];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[Math.min(pts.length - 1, i + 2)];
+        const t = 0.3;
+        areaPath += ' C' + (p1.x + (p2.x - p0.x) * t) + ',' + (p1.y + (p2.y - p0.y) * t) +
+          ' ' + (p2.x - (p3.x - p1.x) * t) + ',' + (p2.y - (p3.y - p1.y) * t) +
+          ' ' + p2.x + ',' + p2.y;
+      }
+      svg += '<path d="' + areaPath + ' V' + (curveTop + chartH) + ' H' + pts[0].x + ' Z" fill="url(#hg)"/>';
+      svg += '<path d="' + areaPath + '" fill="none" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>';
+    }
+
+    pts.forEach(p => {
+      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="2.5" fill="#60a5fa"/>';
+      svg += '<text x="' + p.x + '" y="' + (p.y - 7) + '" text-anchor="middle" fill="#f1f5f9" font-size="9" font-weight="700" font-family="inherit">' + p.val + '°</text>';
+    });
+
+    // Sun bars
+    const sunY = curveTop + chartH + botGap;
+    hourlyItems.forEach((h, i) => {
+      const x = padL + i * colW + barPad;
+      const w = colW - barPad * 2;
       if (h.is_day) {
         const sl = sunLevelFromCloud(h.cloud);
-        svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + sunBarH + '" rx="3" fill="' + sunBarColor(sl) + '"/>';
+        svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="' + sunBarColor(sl) + '"/>';
       } else {
-        svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + sunBarH + '" rx="3" fill="rgb(55,65,81)"/>';
+        svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="rgb(55,65,81)"/>';
       }
     });
 
-    svg += '</svg>';
-
-    // Build items row
-    let itemsHtml = '<div class="hourly-items">';
+    // Rain bars
+    const rainY = sunY + botRowH + botGap;
     hourlyItems.forEach((h, i) => {
-      const d = new Date(h.time);
-      itemsHtml += '<div class="hourly-item' + (i === 0 ? ' selected' : '') + '" data-idx="' + i + '">' +
-        '<div class="hourly-time">' + (i === 0 ? 'Jetzt' : pad(d.getHours()) + ':00') + '</div>' +
-        '<div class="hourly-icon">' + icon(h.icon, h.is_day) + '</div>' +
-        '<div class="hourly-precip">' + (h.precip_prob > 0 ? h.precip_prob + '%' : '') + '</div>' +
-        '</div>';
+      const x = padL + i * colW + barPad;
+      const w = colW - barPad * 2;
+      const prob = h.precip_prob || 0;
+      const hasRain = prob > 20;
+      const rainAlpha = hasRain ? (0.15 + (prob / 100) * 0.5) : 0.06;
+      svg += '<rect x="' + x + '" y="' + rainY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="rgba(96,165,250,' + rainAlpha.toFixed(2) + ')"/>';
+      if (hasRain) {
+        svg += '<text x="' + (x + w / 2) + '" y="' + (rainY + botRowH / 2 + 3) + '" text-anchor="middle" font-size="9">💧</text>';
+      }
     });
-    itemsHtml += '</div>';
 
-    outer.innerHTML = svg + itemsHtml;
+    // Invisible click targets (on top of everything)
+    hourlyItems.forEach((h, i) => {
+      const x = padL + i * colW;
+      svg += '<rect x="' + x + '" y="0" width="' + colW + '" height="' + H + '" fill="transparent" data-idx="' + i + '" style="cursor:pointer" class="h-col"/>';
+    });
 
-    // Click handlers
-    outer.querySelectorAll('.hourly-item').forEach(el => {
-      el.addEventListener('click', () => {
-        const idx = parseInt(el.dataset.idx);
-        selectHour(el, hourlyItems[idx]);
+    svg += '</svg>';
+    outer.innerHTML = svg;
+
+    // Click handling via SVG rects
+    const selBg = outer.querySelector('#hourly-sel-bg');
+    outer.querySelectorAll('.h-col').forEach(rect => {
+      rect.addEventListener('click', () => {
+        const idx = parseInt(rect.dataset.idx);
+        selBg.setAttribute('x', padL + idx * colW);
+        selectHourDetails(hourlyItems[idx]);
       });
     });
 
-    // Select first by default
     selectHourDetails(hourlyItems[0]);
   }
 
-  function selectHour(el, h) {
-    document.querySelectorAll('.hourly-item.selected').forEach(e => e.classList.remove('selected'));
-    el.classList.add('selected');
-    selectHourDetails(h);
-  }
 
   function selectHourDetails(h) {
     // Update main temp + icon + description
@@ -1728,9 +1750,9 @@
   }
 
   // ── Sun bar: 3 discrete colors ──
-  const SUN_RGB = 'rgb(255,250,150)';
-  const MIXED_RGB = 'rgb(255,250,205)';
-  const CLOUD_RGB = 'rgb(205,205,205)';
+  const SUN_RGB = 'rgb(255,210,60)';
+  const MIXED_RGB = 'rgb(255,230,110)';
+  const CLOUD_RGB = 'rgb(200,200,200)';
 
   // sun = 0..1 (fraction of daylight hours with sun)
   // >= 0.5 -> sunny, <= ~0.07 (1hr/14hr) -> clouds, otherwise mixed
