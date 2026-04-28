@@ -9,7 +9,9 @@ COPY src/ ./src/
 ARG DEPLOY_DATE=unknown
 ENV DEPLOY_DATE=$DEPLOY_DATE
 
-RUN useradd --create-home appuser
+RUN useradd --create-home appuser \
+ && mkdir -p /home/appuser/.cache/weather /app/src/static/ai_images \
+ && chown -R appuser:appuser /home/appuser/.cache /app/src/static/ai_images
 USER appuser
 
 CMD ["python", "src/main.py"]
