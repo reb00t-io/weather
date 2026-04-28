@@ -1797,7 +1797,7 @@
     const chartH = 170;   // main chart area
     const botRowH = 14;   // each bottom row
     const botGap = 3;
-    const iconArea = 20;  // weather pictogram row
+    const iconArea = 30;  // weather pictogram row
     const H = topArea + chartH + botGap + botRowH + botGap + botRowH + botGap + iconArea + 4;
 
     // Temp range
@@ -1921,11 +1921,11 @@
       }
     });
 
-    // Weather pictograms (bottom row)
-    const iconY = rainY + botRowH + botGap + 15;
+    // Weather pictograms (bottom row) — sized to nearly fill column width.
+    const iconY = rainY + botRowH + botGap + 23;
     daily.forEach((d, i) => {
       const cx = padL + i * colW + colW / 2;
-      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="14">' + icon(d.icon, 1) + '</text>';
+      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="24">' + icon(d.icon, 1) + '</text>';
     });
 
     svg += '</svg>';
