@@ -1713,7 +1713,7 @@
     hourlyItems.forEach((h, i) => {
       const cx = padL + i * colW + colW / 2;
       const g = icon(h.icon, h.is_day);
-      const fs = g === '🌙' ? 18 : 24;
+      const fs = g === '🌙' ? 16 : 22;
       svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="' + fs + '">' + g + '</text>';
     });
 
@@ -1926,10 +1926,10 @@
     });
 
     // Weather pictograms (bottom row) — sized to nearly fill column width.
-    const iconY = rainY + botRowH + botGap + 23;
+    const iconY = rainY + botRowH + botGap + 22;
     daily.forEach((d, i) => {
       const cx = padL + i * colW + colW / 2;
-      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="24">' + icon(d.icon, 1) + '</text>';
+      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="22">' + icon(d.icon, 1) + '</text>';
     });
 
     svg += '</svg>';
