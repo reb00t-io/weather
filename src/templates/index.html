@@ -1707,10 +1707,14 @@
     });
 
     // Weather icons (bottom row) — sized to nearly fill column width.
+    // The crescent-moon glyph fills its em-box more aggressively than
+    // sun/cloud emojis, so render it slightly smaller for visual parity.
     const iconY = rainY + botRowH + botGap + 23;
     hourlyItems.forEach((h, i) => {
       const cx = padL + i * colW + colW / 2;
-      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="24">' + icon(h.icon, h.is_day) + '</text>';
+      const g = icon(h.icon, h.is_day);
+      const fs = g === '🌙' ? 18 : 24;
+      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="' + fs + '">' + g + '</text>';
     });
 
     // Invisible click targets (on top of everything)
