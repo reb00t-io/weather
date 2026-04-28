@@ -16,8 +16,10 @@ from src.main import API_KEY, app  # noqa: E402
 from src.weather_api import (  # noqa: E402
     CityImageCache,
     WMO_CODES,
+    _build_daily,
     _icon_from_mosmix,
     _parse_brightsky_current,
+    _refine_daily_cloud_icon,
     _weather_code_info,
     _resolve_city,
     _weather_search_term,
@@ -548,3 +550,83 @@ def test_icon_from_mosmix_thresholds_match_current():
     assert _icon_from_mosmix({"cloud_cover": 20})[1] == "mostly-clear"
     assert _icon_from_mosmix({"cloud_cover": 50})[1] == "partly-cloudy"
     assert _icon_from_mosmix({"cloud_cover": 90})[1] == "overcast"
+
+
+# ── Daily forecast cloud rebucketing ───────────────────────────────────────
+
+@pytest.mark.parametrize("code,cloud_mean,expected_icon", [
+    # WMO code 2 (partly-cloudy) but cloud_mean shows mostly clear day
+    (2, 5, "clear"),
+    (2, 20, "mostly-clear"),
+    (2, 50, "partly-cloudy"),
+    (2, 90, "overcast"),
+    # WMO code 3 (overcast) refined down when cloud_mean is low
+    (3, 10, "clear"),
+    (3, 30, "mostly-clear"),
+    # WMO code 1 (mostly-clear) refined up when cloud_mean is high
+    (1, 80, "overcast"),
+])
+def test_refine_daily_cloud_icon_rebuckets(code, cloud_mean, expected_icon):
+    out = _refine_daily_cloud_icon(code, cloud_mean)
+    assert out is not None
+    assert out[1] == expected_icon
+
+
+@pytest.mark.parametrize("code", [45, 61, 71, 80, 95])
+def test_refine_daily_cloud_icon_skips_non_cloud_codes(code):
+    """Fog/rain/snow/shower/thunderstorm codes are never rebucketed."""
+    assert _refine_daily_cloud_icon(code, 5) is None
+    assert _refine_daily_cloud_icon(code, 90) is None
+
+
+def test_refine_daily_cloud_icon_no_cloud_mean():
+    """Without cloud_mean, no refinement happens."""
+    assert _refine_daily_cloud_icon(2, None) is None
+
+
+def test_build_daily_uses_cloud_mean_to_refine_icon():
+    """End-to-end: a day with code 2 (partly-cloudy) and cloud_mean=8
+    should render as 'clear' on the daily card, not 'partly-cloudy'."""
+    daily = _build_daily({
+        "time": ["2026-04-28"],
+        "weathercode": [2],
+        "cloud_cover_mean": [8],
+        "temperature_2m_max": [22.0],
+        "temperature_2m_min": [12.0],
+        "apparent_temperature_max": [21.0],
+        "apparent_temperature_min": [11.0],
+        "precipitation_sum": [0],
+        "precipitation_probability_max": [0],
+        "windspeed_10m_max": [10],
+        "winddirection_10m_dominant": [180],
+        "sunrise": ["2026-04-28T06:00"],
+        "sunset": ["2026-04-28T20:00"],
+        "uv_index_max": [5],
+        "sunshine_duration": [3600 * 12],
+    })
+    assert daily[0]["icon"] == "clear"
+    assert daily[0]["desc"] == "Klar"
+    assert daily[0]["code"] == 2  # WMO code preserved for reference
+    assert daily[0]["cloud_mean"] == 8
+
+
+def test_build_daily_keeps_rain_icon_regardless_of_cloud_mean():
+    """A rainy day with low cloud_mean should still render as rain."""
+    daily = _build_daily({
+        "time": ["2026-04-28"],
+        "weathercode": [61],  # light rain
+        "cloud_cover_mean": [5],
+        "temperature_2m_max": [15.0],
+        "temperature_2m_min": [8.0],
+        "apparent_temperature_max": [14.0],
+        "apparent_temperature_min": [7.0],
+        "precipitation_sum": [3.0],
+        "precipitation_probability_max": [80],
+        "windspeed_10m_max": [12],
+        "winddirection_10m_dominant": [200],
+        "sunrise": ["2026-04-28T06:00"],
+        "sunset": ["2026-04-28T20:00"],
+        "uv_index_max": [3],
+        "sunshine_duration": [3600 * 4],
+    })
+    assert daily[0]["icon"] == "rain-light"

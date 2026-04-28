@@ -263,6 +263,28 @@ def _index_brightsky_hourly(bs_hourly):
     return out
 
 
+def _refine_daily_cloud_icon(code, cloud_mean):
+    """For cloud-family WMO codes (0-3), rebucket by daily cloud_mean.
+
+    Open-Meteo's daily weathercode is the *most severe* condition over
+    the day, so a single partly-cloudy hour at dawn marks the whole
+    day "partly-cloudy" (code 2) even when the sky is mostly clear.
+    Using cloud_cover_mean recovers a representative bucket and keeps
+    the daily card consistent with the hourly/current paths.
+
+    Returns (desc, icon) or None if no refinement applies.
+    """
+    if code not in (0, 1, 2, 3) or cloud_mean is None:
+        return None
+    if cloud_mean < 12:
+        return ("Klar", "clear")
+    if cloud_mean < 38:
+        return ("Überwiegend klar", "mostly-clear")
+    if cloud_mean < 75:
+        return ("Teilweise bewölkt", "partly-cloudy")
+    return ("Bewölkt", "overcast")
+
+
 def _build_daily(daily_raw):
     """Convert an Open-Meteo daily payload into our daily[] list."""
     times = daily_raw.get("time", [])
@@ -271,6 +293,12 @@ def _build_daily(daily_raw):
     for i, t in enumerate(times):
         code = daily_raw.get("weathercode", [None] * n)[i]
         info = _weather_code_info(code)
+        cloud_mean = daily_raw.get("cloud_cover_mean", [None] * n)[i]
+        icon_name = info["icon"]
+        desc = info["description"]
+        refined = _refine_daily_cloud_icon(code, cloud_mean)
+        if refined is not None:
+            desc, icon_name = refined
         out.append({
             "date": t,
             "temp_max": daily_raw.get("temperature_2m_max", [])[i],
@@ -285,10 +313,10 @@ def _build_daily(daily_raw):
             "sunset": daily_raw.get("sunset", [])[i],
             "uv_max": daily_raw.get("uv_index_max", [])[i],
             "sun_hours": round((daily_raw.get("sunshine_duration", [0] * n)[i] or 0) / 3600, 1),
-            "cloud_mean": daily_raw.get("cloud_cover_mean", [None] * n)[i],
+            "cloud_mean": cloud_mean,
             "code": code,
-            "icon": info["icon"],
-            "desc": info["description"],
+            "icon": icon_name,
+            "desc": desc,
         })
     return out
 
