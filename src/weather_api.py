@@ -1,6 +1,7 @@
 """Weather API routes using Open-Meteo (forecasts) and Bright Sky / DWD (current observations)."""
 
 import asyncio
+import hashlib
 import json as _json
 import logging
 import os
@@ -18,10 +19,20 @@ logger = logging.getLogger(__name__)
 weather_bp = Blueprint("weather", __name__)
 
 UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY")
+FAL_KEY = os.environ.get("FAL_KEY")
+FAL_MODEL = os.environ.get("FAL_MODEL", "fal-ai/flux/dev/image-to-image")
 
 # Wikipedia requires a descriptive User-Agent per their robot policy
 # (https://w.wiki/4wJS) — anonymous requests now return 403.
 WIKIPEDIA_UA = "WeatherApp/1.0 (https://weather.reb00t.io; marko@rosenmueller.de)"
+
+# Local store for AI-generated image variants. Files written here are
+# served by Quart's static handler under /static/ai_images/<hash>.webp.
+AI_IMAGES_DIR = Path(__file__).parent / "static" / "ai_images"
+
+# AI variants are cached for a year — they're deterministic outputs of
+# (city, weather, is_night) and only need a refresh if we change prompts.
+_AI_CACHE_TTL = 365 * 86400
 
 # ── Persistent city image cache (SQLite) ──────────────────
 _CACHE_TTL = 86400  # 24 hours
@@ -701,6 +712,135 @@ async def _search_unsplash(session, city: str, weather: str | None, is_night: bo
         return None, None
 
 
+# In-flight AI generations, keyed by cache-key so concurrent requests
+# for the same (city, weather, is_night) only spawn one fal.ai job.
+_ai_inflight: set[str] = set()
+_ai_inflight_lock = threading.Lock()
+
+
+def _ai_prompt(city: str, weather: str | None, is_night: bool) -> str:
+    """Construct a weather/time-conditioned prompt for img2img.
+
+    Style is steered to keep the original architecture so the city
+    remains recognisable; only atmosphere, lighting, and weather are
+    transformed.
+    """
+    mood: list[str] = []
+    if is_night:
+        mood.append("nighttime, city lights glowing")
+    else:
+        mood.append("daytime")
+
+    if weather == "rain":
+        mood.append("heavy rain, wet streets reflecting lights, dramatic moody atmosphere")
+    elif weather == "snow":
+        mood.append("fresh snowfall, snow on rooftops and streets, soft winter light")
+    elif weather == "cloud":
+        mood.append("overcast sky, soft diffused light, muted colors")
+    elif weather == "sun" and not is_night:
+        mood.append("bright sunny day, clear blue sky, golden warm light")
+    elif weather == "sun" and is_night:
+        mood.append("clear starry night sky")
+
+    return (
+        f"Cinematic photo of {city} skyline, {', '.join(mood)}, "
+        "preserve original architecture, landmarks, and skyline silhouette, "
+        "photorealistic, high detail, 16:9"
+    )
+
+
+def _ai_cache_key(city: str, weather: str | None, is_night: bool) -> str:
+    return f"{city}:{weather}:{is_night}:ai"
+
+
+def _ai_file_path(city: str, weather: str | None, is_night: bool) -> tuple[Path, str]:
+    """Stable on-disk path + public URL for a given variant."""
+    raw = _ai_cache_key(city, weather, is_night)
+    digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    return AI_IMAGES_DIR / f"{digest}.webp", f"/static/ai_images/{digest}.webp"
+
+
+async def _generate_ai_variant(
+    session, base_url: str, city: str, weather: str | None, is_night: bool,
+) -> str | None:
+    """Call fal.ai img2img with the Unsplash base, persist the result.
+
+    Returns the public URL on success, or None on any failure (network,
+    auth, model error, write error). Failures are silent so we never
+    degrade the visible product when the AI path is unavailable.
+    """
+    if not FAL_KEY or not base_url:
+        return None
+    prompt = _ai_prompt(city, weather, is_night)
+    headers = {
+        "Authorization": f"Key {FAL_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "image_url": base_url,
+        "prompt": prompt,
+        "strength": 0.55,
+        "num_inference_steps": 28,
+        "guidance_scale": 3.5,
+        "image_size": "landscape_16_9",
+    }
+    try:
+        timeout = aiohttp.ClientTimeout(total=90)
+        async with session.post(
+            f"https://fal.run/{FAL_MODEL}",
+            json=payload,
+            headers=headers,
+            timeout=timeout,
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "fal.ai returned %s for %s", resp.status, _ai_cache_key(city, weather, is_night),
+                )
+                return None
+            data = await resp.json()
+        images = data.get("images") or []
+        if not images:
+            return None
+        result_url = images[0].get("url")
+        if not result_url:
+            return None
+        # Download the generated image so we don't depend on fal's CDN.
+        async with session.get(result_url, timeout=timeout) as img_resp:
+            if img_resp.status != 200:
+                return None
+            content = await img_resp.read()
+        path, public_url = _ai_file_path(city, weather, is_night)
+        AI_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        logger.info("AI variant cached: %s (%d bytes)", public_url, len(content))
+        return public_url
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning("AI variant generation failed: %s", e)
+        return None
+
+
+async def _ai_background_generate(
+    base_url: str, city: str, weather: str | None, is_night: bool,
+    attribution: dict | None,
+):
+    """Run the fal.ai job and persist the result. Fire-and-forget."""
+    key = _ai_cache_key(city, weather, is_night)
+    with _ai_inflight_lock:
+        if key in _ai_inflight:
+            return
+        _ai_inflight.add(key)
+    try:
+        async with aiohttp.ClientSession() as s:
+            ai_url = await _generate_ai_variant(s, base_url, city, weather, is_night)
+        if ai_url:
+            _city_image_cache.put(key, ai_url, attribution)
+    finally:
+        with _ai_inflight_lock:
+            _ai_inflight.discard(key)
+
+
 async def _search_wikipedia(session, city: str):
     """Search Wikipedia for a city image. Returns URL or None."""
     headers = {"User-Agent": WIKIPEDIA_UA}
@@ -752,22 +892,32 @@ async def city_image():
     city = _resolve_city(raw_city)
 
     # Check cache
+    # 1. AI-generated variant takes priority — it's the polished output.
+    ai_key = _ai_cache_key(city, weather, is_night)
+    ai_cached = _city_image_cache.get(ai_key, ttl=_AI_CACHE_TTL)
+    if ai_cached and ai_cached["url"]:
+        return jsonify({"url": ai_cached["url"], "attribution": ai_cached["attribution"]})
+
+    # 2. Fall back to the cached source-image lookup.
     cache_key = f"{city}:{weather}:{is_night}"
     cached = _city_image_cache.get(cache_key)
     if cached:
-        return jsonify({"url": cached["url"], "attribution": cached["attribution"]})
+        url = cached["url"]
+        attribution = cached["attribution"]
+    else:
+        async with aiohttp.ClientSession() as s:
+            url, attribution = await _search_unsplash(s, city, weather, is_night)
+            if not url:
+                url = await _search_wikipedia(s, city)
+                attribution = None
+        _city_image_cache.put(cache_key, url, attribution)
 
-    async with aiohttp.ClientSession() as s:
-        # Try Unsplash first (weather-aware)
-        url, attribution = await _search_unsplash(s, city, weather, is_night)
-
-        # Fallback to Wikipedia
-        if not url:
-            url = await _search_wikipedia(s, city)
-            attribution = None
-
-    # Cache the result (even None to avoid repeated failed lookups)
-    _city_image_cache.put(cache_key, url, attribution)
+    # 3. If AI is configured and we have a base, fire background gen
+    #    so the next request for this variant gets the upgraded image.
+    if FAL_KEY and url:
+        asyncio.create_task(
+            _ai_background_generate(url, city, weather, is_night, attribution),
+        )
 
     return jsonify({"url": url, "attribution": attribution})
 

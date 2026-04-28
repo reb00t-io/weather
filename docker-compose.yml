@@ -6,5 +6,16 @@ services:
     environment:
       - PORT=${PORT}
       - API_KEY=${API_KEY}
+      - UNSPLASH_ACCESS_KEY=${UNSPLASH_ACCESS_KEY:-}
+      - FAL_KEY=${FAL_KEY:-}
     ports:
       - "${PORT}:${PORT}"
+    volumes:
+      # Survive container rebuilds so we don't regenerate AI images
+      # or re-fetch Unsplash/Wikipedia photos on every deploy.
+      - weather_ai_images:/app/src/static/ai_images
+      - weather_cache:/home/appuser/.cache/weather
+
+volumes:
+  weather_ai_images:
+  weather_cache:

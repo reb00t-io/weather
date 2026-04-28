@@ -16,6 +16,9 @@ from src.main import API_KEY, app  # noqa: E402
 from src.weather_api import (  # noqa: E402
     CityImageCache,
     WMO_CODES,
+    _ai_cache_key,
+    _ai_file_path,
+    _ai_prompt,
     _build_daily,
     _icon_from_mosmix,
     _parse_brightsky_current,
@@ -701,3 +704,57 @@ def test_build_daily_keeps_rain_icon_regardless_of_cloud_mean():
         "sunshine_duration": [3600 * 4],
     })
     assert daily[0]["icon"] == "rain-light"
+
+
+# ── AI image variant ──────────────────────────────────────────────────────
+
+def test_ai_cache_key_distinct_per_variant():
+    """Each (city, weather, is_night) combination gets its own cache key
+    so an AI rain-night image won't be served when the user wants sun-day."""
+    keys = {
+        _ai_cache_key("Munich", "rain", True),
+        _ai_cache_key("Munich", "rain", False),
+        _ai_cache_key("Munich", "sun", True),
+        _ai_cache_key("Munich", "sun", False),
+        _ai_cache_key("Berlin", "rain", True),
+    }
+    assert len(keys) == 5
+
+
+def test_ai_file_path_stable_and_url_matches_disk():
+    """The hash → path/URL mapping must be deterministic so cache lookups
+    and the served URL agree."""
+    path1, url1 = _ai_file_path("Munich", "rain", True)
+    path2, url2 = _ai_file_path("Munich", "rain", True)
+    assert path1 == path2
+    assert url1 == url2
+    assert url1.startswith("/static/ai_images/")
+    assert url1.endswith(".webp")
+    # The hash in the URL matches the file the path points to
+    assert path1.name == url1.rsplit("/", 1)[-1]
+
+
+def test_ai_file_path_different_for_different_variants():
+    p1, _ = _ai_file_path("Munich", "rain", True)
+    p2, _ = _ai_file_path("Munich", "sun", False)
+    assert p1 != p2
+
+
+def test_ai_prompt_includes_city_and_weather_modifiers():
+    """The prompt must name the city (so the model preserves identity)
+    and describe the weather/time so img2img produces visible variation."""
+    p = _ai_prompt("Hamburg", "rain", is_night=True)
+    assert "Hamburg" in p
+    assert "rain" in p.lower()
+    assert "night" in p.lower()
+    # Steering language to keep architecture intact
+    assert "preserve" in p.lower() or "original" in p.lower()
+
+
+def test_ai_prompt_sun_day_vs_night_differ():
+    """Day-sun and night-sun should produce different prompts so the
+    AI generates distinct images."""
+    day = _ai_prompt("Berlin", "sun", is_night=False)
+    night = _ai_prompt("Berlin", "sun", is_night=True)
+    assert day != night
+    assert "starry" in night.lower() or "night" in night.lower()
