@@ -550,6 +550,55 @@
     .aqi-level { font-size: 1rem; font-weight: 700; margin-top: 0.125rem; }
     .aqi-details { font-size: 0.6875rem; color: var(--text-muted); margin-top: 0.25rem; }
 
+    /* ── Pollen Card ──────────────────────────────────────── */
+    .pollen-card {
+      background: var(--bg-card);
+      backdrop-filter: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .pollen-row {
+      display: grid;
+      grid-template-columns: 1.25rem 1fr auto auto;
+      align-items: center;
+      gap: 0.625rem;
+      font-size: 0.8125rem;
+    }
+
+    .pollen-emoji { font-size: 0.9375rem; line-height: 1; text-align: center; }
+    .pollen-name { font-weight: 600; }
+    .pollen-value { font-size: 0.6875rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+    .pollen-level {
+      font-size: 0.625rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      padding: 0.125rem 0.5rem;
+      border-radius: 999px;
+      color: #fff;
+      min-width: 4rem;
+      text-align: center;
+    }
+
+    .pollen-level.gray   { background: #475569; color: #cbd5e1; }
+    .pollen-level.green  { background: #22c55e; }
+    .pollen-level.orange { background: #f97316; }
+    .pollen-level.red    { background: #ef4444; }
+
+    .pollen-empty {
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 0.25rem 0;
+    }
+
     /* ── Section ──────────────────────────────────────────── */
     .section-label {
       font-size: 0.75rem;
@@ -1060,6 +1109,9 @@
           </div>
         </div>
         <div class="daily-card fade-in fade-in-delay-2" id="daily-card"></div>
+
+        <div class="section-label fade-in fade-in-delay-2" id="pollen-section" style="display:none">Pollenflug</div>
+        <div class="pollen-card fade-in fade-in-delay-2" id="pollen-card" style="display:none"></div>
       </div>
 
     </div>
@@ -1469,6 +1521,7 @@
     renderHourly(data.hourly, now);
     renderTempChart(data.daily);
     renderDaily(data.daily, data.hourly);
+    renderPollen(data.pollen);
     weatherContent.style.display = 'block';
   }
 
@@ -1513,6 +1566,32 @@
         '<div class="aqi-level">' + esc(aqi.level) + '</div>' +
         '<div class="aqi-details">' + details + '</div>' +
       '</div>';
+  }
+
+  // ── Pollen ────────────────────────────────────────────
+  function renderPollen(pollen) {
+    const sec = $('pollen-section');
+    const el = $('pollen-card');
+    if (!pollen) {
+      sec.style.display = 'none';
+      el.style.display = 'none';
+      return;
+    }
+    sec.style.display = 'block';
+    el.style.display = 'flex';
+    const species = pollen.species || [];
+    if (!species.length) {
+      el.innerHTML = '<div class="pollen-empty">Keine Pollen aktiv</div>';
+      return;
+    }
+    el.innerHTML = species.map(s =>
+      '<div class="pollen-row">' +
+        '<div class="pollen-emoji">' + s.emoji + '</div>' +
+        '<div class="pollen-name">' + esc(s.name) + '</div>' +
+        '<div class="pollen-value">' + s.value + ' /m³</div>' +
+        '<div class="pollen-level ' + s.color + '">' + esc(s.level_label) + '</div>' +
+      '</div>'
+    ).join('');
   }
 
   // ── City Background Image ─────────────────────────────

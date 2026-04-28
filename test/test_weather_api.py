@@ -19,6 +19,8 @@ from src.weather_api import (  # noqa: E402
     _build_daily,
     _icon_from_mosmix,
     _parse_brightsky_current,
+    _parse_pollen,
+    _pollen_level,
     _refine_daily_cloud_icon,
     _weather_code_info,
     _resolve_city,
@@ -608,6 +610,75 @@ def test_build_daily_uses_cloud_mean_to_refine_icon():
     assert daily[0]["desc"] == "Klar"
     assert daily[0]["code"] == 2  # WMO code preserved for reference
     assert daily[0]["cloud_mean"] == 8
+
+
+# ── Pollen ────────────────────────────────────────────────────────────────
+
+def test_pollen_level_buckets():
+    """Per-species thresholds bucket grains/m³ into 0-3."""
+    assert _pollen_level("birch", 0) == 0
+    assert _pollen_level("birch", None) == 0
+    assert _pollen_level("birch", 5) == 1   # low
+    assert _pollen_level("birch", 80) == 2  # moderate
+    assert _pollen_level("birch", 200) == 3 # high
+    # ragweed has tighter thresholds
+    assert _pollen_level("ragweed", 1) == 1
+    assert _pollen_level("ragweed", 5) == 2
+    assert _pollen_level("ragweed", 50) == 3
+
+
+def test_parse_pollen_returns_none_when_no_data():
+    assert _parse_pollen(None) is None
+    assert _parse_pollen({}) is None
+    assert _parse_pollen({"current": {}}) is None
+    # All pollen vars missing → None (model has no coverage here)
+    assert _parse_pollen({"current": {"european_aqi": 30}}) is None
+
+
+def test_parse_pollen_filters_zero_species():
+    """Species reported as 0 should be hidden, but presence of any
+    pollen variable means the model has coverage so we still return
+    a (possibly empty) species list rather than None."""
+    out = _parse_pollen({"current": {
+        "alder_pollen": 0,
+        "birch_pollen": 50,
+        "grass_pollen": 0,
+    }})
+    assert out is not None
+    keys = [s["key"] for s in out["species"]]
+    assert keys == ["birch"]
+    assert out["species"][0]["level"] == 2
+    assert out["species"][0]["color"] == "orange"
+    assert out["species"][0]["name"] == "Birke"
+
+
+def test_parse_pollen_sorted_by_severity():
+    """Species are ordered highest level first so the user sees the
+    most relevant pollen at the top of the card."""
+    out = _parse_pollen({"current": {
+        "alder_pollen": 5,        # low
+        "birch_pollen": 200,      # high
+        "grass_pollen": 30,       # moderate
+        "ragweed_pollen": 0.5,    # low
+    }})
+    levels = [s["level"] for s in out["species"]]
+    assert levels == sorted(levels, reverse=True)
+    assert out["species"][0]["key"] == "birch"
+
+
+def test_parse_pollen_empty_when_all_zero():
+    """Coverage area but nothing in the air right now: empty species
+    list (frontend shows 'keine Pollen aktiv')."""
+    out = _parse_pollen({"current": {
+        "alder_pollen": 0,
+        "birch_pollen": 0,
+        "grass_pollen": 0,
+        "mugwort_pollen": 0,
+        "olive_pollen": 0,
+        "ragweed_pollen": 0,
+    }})
+    assert out is not None
+    assert out["species"] == []
 
 
 def test_build_daily_keeps_rain_icon_regardless_of_cloud_mean():

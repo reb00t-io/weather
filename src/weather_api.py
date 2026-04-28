@@ -395,13 +395,26 @@ def _overlay_mosmix(hourly, bs_index):
         h["source"] = "mosmix"
 
 
+_POLLEN_VARS = (
+    "alder_pollen",
+    "birch_pollen",
+    "grass_pollen",
+    "mugwort_pollen",
+    "olive_pollen",
+    "ragweed_pollen",
+)
+
+
 async def _fetch_aqi(session, lat, lon):
-    """Fetch air quality from Open-Meteo."""
+    """Fetch air quality + pollen from Open-Meteo."""
     try:
         params = {
             "latitude": lat,
             "longitude": lon,
-            "current": "european_aqi,pm2_5,pm10,nitrogen_dioxide,ozone",
+            "current": ",".join(
+                ("european_aqi", "pm2_5", "pm10", "nitrogen_dioxide", "ozone")
+                + _POLLEN_VARS
+            ),
             "timezone": "Europe/Berlin",
         }
         async with session.get(OPEN_METEO_AQI, params=params) as resp:
@@ -536,6 +549,86 @@ def _parse_aqi(aqi_data):
         "pm10": c.get("pm10"),
         "no2": c.get("nitrogen_dioxide"),
         "o3": c.get("ozone"),
+    }
+
+
+# Per-species pollen severity thresholds in grains/m³.
+# Each tuple defines (low_max, moderate_max) — anything above the
+# moderate_max is "high". Values reflect commonly used clinical
+# allergy thresholds (Pollenstiftung / EAACI references).
+_POLLEN_THRESHOLDS = {
+    "alder": (15, 100),
+    "birch": (15, 100),
+    "grass": (10, 50),
+    "mugwort": (8, 25),
+    "olive": (10, 50),
+    "ragweed": (1, 10),
+}
+
+# German display names + emoji for each pollen species.
+_POLLEN_LABELS = {
+    "alder":   ("Erle",     "\U0001F33F"),
+    "birch":   ("Birke",    "\U0001F33F"),
+    "grass":   ("Gräser",   "\U0001F33E"),
+    "mugwort": ("Beifuß",   "\U0001F33F"),
+    "olive":   ("Olive",    "\U0001FAD2"),
+    "ragweed": ("Ambrosia", "\U0001F33F"),
+}
+
+_POLLEN_LEVEL_LABELS = ("Keine", "Niedrig", "Mittel", "Hoch")
+_POLLEN_LEVEL_COLORS = ("gray", "green", "orange", "red")
+
+
+def _pollen_level(species, value):
+    """Bucket a grains/m³ reading into 0-3 (none/low/moderate/high)."""
+    if value is None or value <= 0:
+        return 0
+    low_max, mod_max = _POLLEN_THRESHOLDS[species]
+    if value <= low_max:
+        return 1
+    if value <= mod_max:
+        return 2
+    return 3
+
+
+def _parse_pollen(aqi_data):
+    """Extract current per-species pollen levels from the AQI payload.
+
+    Returns a list sorted by severity (highest first), filtering out
+    species the model reports as zero so the card shows only what's
+    actually in the air. Returns None if no pollen data is available
+    at all (e.g. outside the model's coverage area).
+    """
+    if not aqi_data or "current" not in aqi_data:
+        return None
+    c = aqi_data["current"]
+    species_values = []
+    any_present = False
+    for var in _POLLEN_VARS:
+        species = var.replace("_pollen", "")
+        v = c.get(var)
+        if v is None:
+            continue
+        any_present = True
+        if v <= 0:
+            continue
+        level = _pollen_level(species, v)
+        label, emoji = _POLLEN_LABELS[species]
+        species_values.append({
+            "key": species,
+            "name": label,
+            "emoji": emoji,
+            "value": round(v, 1),
+            "level": level,
+            "level_label": _POLLEN_LEVEL_LABELS[level],
+            "color": _POLLEN_LEVEL_COLORS[level],
+        })
+    if not any_present:
+        return None
+    species_values.sort(key=lambda s: (-s["level"], -s["value"]))
+    return {
+        "species": species_values,
+        "time": c.get("time"),
     }
 
 
@@ -852,5 +945,6 @@ async def weather():
         "hourly": hourly,
         "daily": daily,
         "aqi": _parse_aqi(aqi_data),
+        "pollen": _parse_pollen(aqi_data),
         "warnings": _parse_warnings(warn_data),
     })
