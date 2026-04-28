@@ -1616,7 +1616,7 @@
     const tempPad = 16;
     const botGap = 3;
     const botRowH = 14;
-    const iconArea = 20;
+    const iconArea = 30;
     const barPad = 3;
     const H = topArea + chartH + botGap + botRowH + botGap + botRowH + botGap + iconArea + 4;
 
@@ -1706,11 +1706,11 @@
       }
     });
 
-    // Weather icons (bottom row)
-    const iconY = rainY + botRowH + botGap + 15;
+    // Weather icons (bottom row) — sized to nearly fill column width.
+    const iconY = rainY + botRowH + botGap + 23;
     hourlyItems.forEach((h, i) => {
       const cx = padL + i * colW + colW / 2;
-      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="14">' + icon(h.icon, h.is_day) + '</text>';
+      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="24">' + icon(h.icon, h.is_day) + '</text>';
     });
 
     // Invisible click targets (on top of everything)
