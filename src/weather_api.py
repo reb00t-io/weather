@@ -421,9 +421,21 @@ def _parse_brightsky_current(bs_data, is_day_fallback=None):
         is_day = is_day_fallback
 
     cloud = w.get("cloud_cover")
-    if bs_icon == "wind" and cloud is not None:
-        if cloud < 25:
+    # Bright Sky's `icon` string is coarse — it has no "mostly-clear"
+    # variant, so 12-38% cloud cover lands on "partly-cloudy-day"
+    # and the card looks more clouded than reality. When we have a
+    # numeric cloud_cover, rebucket the cloud-family icons against
+    # the WMO-aligned thresholds used by the hourly path.
+    _CLOUD_FAMILY = {
+        "clear-day", "clear-night",
+        "partly-cloudy-day", "partly-cloudy-night",
+        "cloudy", "wind",
+    }
+    if bs_icon in _CLOUD_FAMILY and cloud is not None:
+        if cloud < 12:
             desc, our_icon = ("Klar", "clear")
+        elif cloud < 38:
+            desc, our_icon = ("Überwiegend klar", "mostly-clear")
         elif cloud < 75:
             desc, our_icon = ("Teilweise bewölkt", "partly-cloudy")
         else:

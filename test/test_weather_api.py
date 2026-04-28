@@ -16,6 +16,8 @@ from src.main import API_KEY, app  # noqa: E402
 from src.weather_api import (  # noqa: E402
     CityImageCache,
     WMO_CODES,
+    _icon_from_mosmix,
+    _parse_brightsky_current,
     _weather_code_info,
     _resolve_city,
     _weather_search_term,
@@ -479,3 +481,70 @@ def test_cache_stores_none_url(tmp_path):
     entry = cache.get("Nowhere:sun:False")
     assert entry is not None
     assert entry["url"] is None
+
+
+# ── Cloud-family icon rebucketing ──────────────────────────────────────────
+
+def _bs_current(bs_icon, cloud, condition="dry"):
+    """Build a minimal Bright Sky current_weather payload."""
+    return {
+        "weather": {
+            "icon": bs_icon,
+            "temperature": 15.0,
+            "cloud_cover": cloud,
+            "condition": condition,
+            "wind_speed_10": 5,
+            "wind_direction_10": 180,
+            "relative_humidity": 60,
+            "precipitation_10": 0,
+            "timestamp": "2026-04-28T12:00:00+02:00",
+        },
+        "sources": [],
+    }
+
+
+@pytest.mark.parametrize("cloud,expected_icon", [
+    (5, "clear"),
+    (20, "mostly-clear"),
+    (50, "partly-cloudy"),
+    (90, "overcast"),
+])
+def test_current_partly_cloudy_rebucketed_by_cloud_cover(cloud, expected_icon):
+    """Bright Sky reports a coarse 'partly-cloudy-day' for any 30-70% sky;
+    we should refine using the actual cloud_cover so the home card
+    doesn't look more clouded than reality."""
+    out = _parse_brightsky_current(_bs_current("partly-cloudy-day", cloud))
+    assert out["icon"] == expected_icon
+
+
+@pytest.mark.parametrize("bs_icon,cloud,expected_icon", [
+    ("clear-day", 30, "mostly-clear"),
+    ("clear-day", 50, "partly-cloudy"),
+    ("cloudy", 20, "mostly-clear"),
+    ("cloudy", 80, "overcast"),
+])
+def test_current_cloud_family_uses_cloud_cover(bs_icon, cloud, expected_icon):
+    """All cloud-family icons (clear/partly-cloudy/cloudy) get rebucketed."""
+    out = _parse_brightsky_current(_bs_current(bs_icon, cloud))
+    assert out["icon"] == expected_icon
+
+
+def test_current_no_cloud_cover_falls_back_to_coarse_map():
+    """Without cloud_cover, fall back to Bright Sky's coarse icon mapping."""
+    out = _parse_brightsky_current(_bs_current("partly-cloudy-day", None))
+    assert out["icon"] == "partly-cloudy"
+
+
+def test_current_rain_icon_not_rebucketed():
+    """Rain/snow/fog icons must not be overridden by cloud_cover."""
+    out = _parse_brightsky_current(_bs_current("rain", 20, condition="rain"))
+    # cloud_cover=20 would map to "mostly-clear", but rain wins
+    assert out["icon"] in ("rain", "rain-light")
+
+
+def test_icon_from_mosmix_thresholds_match_current():
+    """Hourly and current paths should agree on cloud-cover thresholds."""
+    assert _icon_from_mosmix({"cloud_cover": 5})[1] == "clear"
+    assert _icon_from_mosmix({"cloud_cover": 20})[1] == "mostly-clear"
+    assert _icon_from_mosmix({"cloud_cover": 50})[1] == "partly-cloudy"
+    assert _icon_from_mosmix({"cloud_cover": 90})[1] == "overcast"
