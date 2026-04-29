@@ -45,6 +45,7 @@
     <div class="tab-bar">
       <button class="tab-btn active" data-tab="weather">Wetter</button>
       <button class="tab-btn" data-tab="radar">Regenradar</button>
+      <button class="tab-btn" data-tab="events" id="tab-btn-events" style="display:none">Events</button>
     </div>
   </header>
 
@@ -130,6 +131,29 @@
             <span>stark</span>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- ═══ Events Tab ═══ -->
+    <div class="tab-panel" id="panel-events">
+      <div class="events-header">
+        <div class="events-title" id="events-title">Events in Berlin</div>
+        <div class="events-filters" id="events-filters">
+          <button class="events-chip active" data-filter="all">Alle</button>
+          <button class="events-chip" data-filter="today">Heute</button>
+          <button class="events-chip" data-filter="tomorrow">Morgen</button>
+          <button class="events-chip" data-filter="weekend">Wochenende</button>
+        </div>
+      </div>
+      <div class="loading" id="events-loading"><div class="spinner"></div><p>Events werden geladen...</p></div>
+      <div class="placeholder" id="events-empty" style="display:none">
+        <div class="placeholder-icon">&#127881;</div>
+        <p>Keine Events im Zeitraum</p>
+      </div>
+      <div id="events-list"></div>
+      <button class="events-more-btn" id="events-more-btn" style="display:none" type="button">Mehr anzeigen</button>
+      <div class="events-source">
+        Daten: <a href="https://www.kulturdaten.berlin/" target="_blank" rel="noopener">kulturdaten.berlin</a> (CC BY 3.0)
       </div>
     </div>
 

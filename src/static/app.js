@@ -292,6 +292,8 @@
     if (window._radarMap) {
       window._radarMap.setView([city.lat, city.lon], 8);
     }
+
+    fetchEvents(city);
   }
 
   // ── Fetch Weather ─────────────────────────────────────
@@ -1161,12 +1163,221 @@
       // Refresh if app was in background for 5+ minutes
       if (elapsed > 5 * 60 * 1000) {
         fetchWeather(currentCity);
+        fetchEvents(currentCity);
       }
     }
     if (document.visibilityState === 'hidden') {
       lastVisible = Date.now();
     }
   });
+
+  // ── Events ────────────────────────────────────────────
+  const eventsState = { city: null, all: [], filter: 'all', shown: 25 };
+  const EVENTS_PAGE = 25;
+  const eventsBtn = $('tab-btn-events');
+  const eventsList = $('events-list');
+  const eventsLoading = $('events-loading');
+  const eventsEmpty = $('events-empty');
+  const eventsMoreBtn = $('events-more-btn');
+  const eventsTitle = $('events-title');
+  const eventsFiltersWrap = $('events-filters');
+
+  const DAY_HEADERS_F = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'];
+  const MONTH_F = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+
+  function isoToday() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function isoOffset(days) {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  // Parse 'YYYY-MM-DD' as local-date so day-of-week is correct in any TZ.
+  function parseLocalDate(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+
+  function formatDayHeader(iso) {
+    const d = parseLocalDate(iso);
+    const today = isoToday();
+    const tomorrow = isoOffset(1);
+    let prefix;
+    if (iso === today) prefix = 'HEUTE';
+    else if (iso === tomorrow) prefix = 'MORGEN';
+    else prefix = DAY_HEADERS_F[d.getDay()].toUpperCase();
+    return prefix + ' · ' + d.getDate() + '. ' + MONTH_F[d.getMonth()];
+  }
+
+  function formatTime(t) {
+    return t ? t.slice(0, 5) : null;
+  }
+
+  function applyFilter(events, filter) {
+    if (filter === 'all') return events;
+    if (filter === 'today') {
+      const today = isoToday();
+      return events.filter(e => e.start_date === today);
+    }
+    if (filter === 'tomorrow') {
+      const tomorrow = isoOffset(1);
+      return events.filter(e => e.start_date === tomorrow);
+    }
+    if (filter === 'weekend') {
+      // Next Sat & Sun within the loaded range.
+      return events.filter(e => {
+        const d = parseLocalDate(e.start_date);
+        const dow = d.getDay();
+        return dow === 0 || dow === 6;
+      });
+    }
+    return events;
+  }
+
+  function renderEvents() {
+    const filtered = applyFilter(eventsState.all, eventsState.filter);
+    const visible = filtered.slice(0, eventsState.shown);
+
+    eventsList.innerHTML = '';
+    eventsEmpty.style.display = filtered.length ? 'none' : 'block';
+    if (!filtered.length) {
+      eventsMoreBtn.style.display = 'none';
+      return;
+    }
+
+    let lastDate = null;
+    for (const ev of visible) {
+      if (ev.start_date !== lastDate) {
+        const h = document.createElement('div');
+        h.className = 'events-day-header';
+        if (ev.start_date === isoToday()) h.classList.add('today');
+        h.textContent = formatDayHeader(ev.start_date);
+        eventsList.appendChild(h);
+        lastDate = ev.start_date;
+      }
+      eventsList.appendChild(createEventCard(ev));
+    }
+
+    const more = filtered.length - visible.length;
+    if (more > 0) {
+      eventsMoreBtn.textContent = 'Mehr anzeigen (' + more + ')';
+      eventsMoreBtn.style.display = 'block';
+    } else {
+      eventsMoreBtn.style.display = 'none';
+    }
+  }
+
+  function createEventCard(ev) {
+    const card = document.createElement('div');
+    card.className = 'event-card';
+
+    const timeCol = document.createElement('div');
+    timeCol.className = 'event-time';
+    const start = formatTime(ev.start_time);
+    if (start) {
+      const main = document.createElement('div');
+      main.className = 'event-time-main';
+      main.textContent = start;
+      timeCol.appendChild(main);
+      const end = formatTime(ev.end_time);
+      if (end && end !== start) {
+        const e = document.createElement('div');
+        e.className = 'event-time-end';
+        e.textContent = '– ' + end;
+        timeCol.appendChild(e);
+      }
+    } else {
+      const allDay = document.createElement('div');
+      allDay.className = 'event-time-allday';
+      allDay.textContent = 'Ganz-\ntägig';
+      allDay.style.whiteSpace = 'pre-line';
+      timeCol.appendChild(allDay);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'event-body';
+
+    const title = document.createElement('div');
+    title.className = 'event-title';
+    title.textContent = ev.title;
+    body.appendChild(title);
+
+    const meta = document.createElement('div');
+    meta.className = 'event-meta';
+    if (ev.venue) {
+      const v = document.createElement('span');
+      v.className = 'event-venue';
+      v.textContent = ev.venue;
+      meta.appendChild(v);
+    }
+    if (ev.is_free) {
+      const b = document.createElement('span');
+      b.className = 'event-badge free';
+      b.textContent = 'Frei';
+      meta.appendChild(b);
+    }
+    body.appendChild(meta);
+
+    card.appendChild(timeCol);
+    card.appendChild(body);
+    return card;
+  }
+
+  function updateEventsTitle(city) {
+    if (!city) return;
+    const region = city.name.split(',')[0].split(/[-–]/)[0].trim();
+    eventsTitle.textContent = 'Events in ' + region;
+  }
+
+  async function fetchEvents(city) {
+    if (!city) return;
+    eventsState.city = city;
+    eventsState.shown = EVENTS_PAGE;
+    updateEventsTitle(city);
+    eventsLoading.classList.add('visible');
+    eventsList.innerHTML = '';
+    eventsMoreBtn.style.display = 'none';
+    try {
+      const r = await fetch('/api/events?city=' + encodeURIComponent(city.name) + '&days=14',
+                            { headers: AUTH_HEADERS });
+      const data = await r.json();
+      eventsState.all = data.events || [];
+      // Tab visible only when this region actually has events.
+      eventsBtn.style.display = eventsState.all.length ? '' : 'none';
+      // If the user was on the events tab but the new city has none, fall back.
+      if (!eventsState.all.length && eventsBtn.classList.contains('active')) {
+        document.querySelector('.tab-btn[data-tab="weather"]').click();
+      }
+      renderEvents();
+    } catch(e) {
+      console.error('events fetch failed', e);
+      eventsBtn.style.display = 'none';
+    } finally {
+      eventsLoading.classList.remove('visible');
+    }
+  }
+
+  eventsFiltersWrap.querySelectorAll('.events-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      eventsFiltersWrap.querySelectorAll('.events-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      eventsState.filter = chip.dataset.filter;
+      eventsState.shown = EVENTS_PAGE;
+      renderEvents();
+    });
+  });
+
+  eventsMoreBtn.addEventListener('click', () => {
+    eventsState.shown += EVENTS_PAGE;
+    renderEvents();
+  });
+
+  // Initial load: if we restored a saved city, also fetch its events.
+  if (currentCity) fetchEvents(currentCity);
 
   // ── PWA Service Worker ────────────────────────────────
   if ('serviceWorker' in navigator) {

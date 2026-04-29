@@ -6,11 +6,16 @@ from quart import Quart, jsonify, render_template, request
 
 try:
     from .weather_api import weather_bp
+    from .events.api import events_bp
+    from .events import service as events_service
 except ImportError:
     from weather_api import weather_bp
+    from events.api import events_bp
+    from events import service as events_service
 
 app = Quart(__name__)
 app.register_blueprint(weather_bp)
+app.register_blueprint(events_bp)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +47,12 @@ async def index():
         deploy_date=DEPLOY_DATE,
         api_key=API_KEY,
     )
+
+
+@app.before_serving
+async def start_events_refresher():
+    import asyncio
+    asyncio.create_task(events_service.background_refresher())
 
 
 if __name__ == "__main__":
