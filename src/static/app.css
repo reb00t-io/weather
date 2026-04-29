@@ -989,10 +989,11 @@ body {
 }
 
 .events-filters::-webkit-scrollbar { display: none; }
+.events-filters-time { margin-top: 0.375rem; }
 
 .events-chip {
   flex-shrink: 0;
-  padding: 0.375rem 0.875rem;
+  padding: 0.4375rem 0.875rem;
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--bg-surface);
@@ -1002,6 +1003,13 @@ body {
   font-family: inherit;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.events-chip-sm {
+  font-size: 0.75rem;
+  padding: 0.3125rem 0.6875rem;
+  font-weight: 500;
 }
 
 .events-chip:hover { color: var(--text); }
@@ -1087,6 +1095,12 @@ body {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.event-cat-emoji {
+  font-size: 0.875rem;
+  margin-right: 0.3125rem;
+  display: inline-block;
 }
 
 .event-meta {

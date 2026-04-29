@@ -9,6 +9,7 @@ import pytest
 
 os.environ.setdefault("API_KEY", "test-api-key")
 
+from src.events import enrich as events_enrich  # noqa: E402
 from src.events import service as events_service  # noqa: E402
 from src.events.api import _resolve_region  # noqa: E402
 from src.events.source_kdb import _normalise  # noqa: E402
@@ -231,3 +232,134 @@ async def test_api_resolves_district_to_region(client, isolated_store):
     body = await r.get_json()
     assert body["region"] == "Berlin"
     assert body["count"] == 1
+
+
+# ── Heuristic classifier ────────────────────────────────────────────────────
+
+def test_heuristic_civic_patterns():
+    cases = [
+        "Standort der mobilen Wache in der Direktion 4",
+        "Beteiligung der Öffentlichkeit zum Bebauungsplan XIV-263a",
+        "Sprechstunde der Pflegestützpunkte Reinickendorf",
+        "Stationäre Energieberatung der Verbraucherzentrale e.V.",
+        "Berufsberatung für Frauen mit Migrationserfahrung",
+    ]
+    for title in cases:
+        c = events_enrich.classify_heuristic(title)
+        assert c.is_civic is True, f"expected civic: {title!r}"
+        assert c.interest_score == 0
+        assert c.category == "civic"
+
+
+def test_heuristic_strong_cultural_patterns():
+    cases = [
+        ("Vernissage zur Ausstellung Foo", "art", 2),
+        ("Konzert: Berliner Philharmoniker", "music", 2),
+        ("Theater Geist - Das schönste Ei der Welt", "stage", 2),
+        ("Karneval der Kulturen 2026", "festival", 3),
+        ("Wochenmarkt Kollwitzplatz", "market", 2),
+    ]
+    for title, expected_cat, expected_score in cases:
+        c = events_enrich.classify_heuristic(title)
+        assert c.category == expected_cat, f"{title!r} → {c.category}"
+        assert c.interest_score == expected_score
+        assert c.is_civic is False
+
+
+def test_heuristic_falls_back_to_other():
+    c = events_enrich.classify_heuristic("Random title that matches nothing")
+    assert c.category == "other"
+    assert c.interest_score == 1
+    assert c.is_civic is False
+
+
+def test_apply_heuristic_writes_classification():
+    events = [_ev(id="E1", title="Vernissage Foo"),
+              _ev(id="E2", title="Sprechstunde Bürgeramt")]
+    out = events_enrich.apply_heuristic(events)
+    assert out[0].category == "art"
+    assert out[0].is_civic is False
+    assert out[1].category == "civic"
+    assert out[1].is_civic is True
+    # enriched_at stays None — that's the AI's column.
+    assert out[0].enriched_at is None
+
+
+# ── AI response parser ──────────────────────────────────────────────────────
+
+def test_parse_response_jsonl_lines():
+    text = (
+        '{"id":"E1","category":"music","interest_score":3,"is_civic":false}\n'
+        '{"id":"E2","category":"civic","interest_score":0,"is_civic":true}\n'
+    )
+    out = events_enrich._parse_response(text)
+    assert set(out) == {"E1", "E2"}
+    assert out["E1"].category == "music"
+    assert out["E1"].interest_score == 3
+    assert out["E2"].is_civic is True
+
+
+def test_parse_response_tolerates_prose_and_fences():
+    text = (
+        "Sure, here you go:\n"
+        "```json\n"
+        '{"id":"E1","category":"art","interest_score":2,"is_civic":false}\n'
+        "```\n"
+    )
+    out = events_enrich._parse_response(text)
+    assert "E1" in out
+    assert out["E1"].category == "art"
+
+
+def test_parse_response_skips_invalid_categories():
+    text = (
+        '{"id":"E1","category":"music","interest_score":2,"is_civic":false}\n'
+        '{"id":"E2","category":"banana","interest_score":2,"is_civic":false}\n'
+    )
+    out = events_enrich._parse_response(text)
+    assert set(out) == {"E1"}
+
+
+def test_parse_response_clamps_score():
+    text = '{"id":"E1","category":"music","interest_score":99,"is_civic":false}\n'
+    out = events_enrich._parse_response(text)
+    assert out["E1"].interest_score == 3
+
+
+# ── Schema preserves enrichment across re-imports ──────────────────────────
+
+def test_replace_region_preserves_classification(store):
+    e1 = _ev(id="E1", title="Vernissage", category="art",
+             interest_score=2, is_civic=False, enriched_at=100.0)
+    store.upsert_many([e1])
+
+    # Source layer re-imports the same event with no classification fields.
+    re_imported = _ev(id="E1", title="Vernissage", category=None,
+                      interest_score=None, is_civic=None, enriched_at=None)
+    store.replace_region("Berlin", [re_imported])
+
+    rows = store.query("Berlin", "2026-04-29", "2026-05-13")
+    assert rows[0].category == "art"
+    assert rows[0].interest_score == 2
+    assert rows[0].is_civic is False
+    assert rows[0].enriched_at == 100.0
+
+
+def test_query_unenriched(store):
+    e1 = _ev(id="E1", enriched_at=None)
+    e2 = _ev(id="E2", enriched_at=123.4)
+    store.upsert_many([e1, e2])
+    pending = store.query_unenriched()
+    assert {p.id for p in pending} == {"E1"}
+
+
+def test_update_classification(store):
+    store.upsert_many([_ev(id="E1")])
+    store.update_classification(
+        "E1", category="music", interest_score=3,
+        is_civic=False, enriched_at=42.0,
+    )
+    rows = store.query("Berlin", "2026-04-29", "2026-05-13")
+    assert rows[0].category == "music"
+    assert rows[0].interest_score == 3
+    assert rows[0].enriched_at == 42.0

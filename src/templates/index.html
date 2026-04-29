@@ -138,11 +138,21 @@
     <div class="tab-panel" id="panel-events">
       <div class="events-header">
         <div class="events-title" id="events-title">Events in Berlin</div>
-        <div class="events-filters" id="events-filters">
-          <button class="events-chip active" data-filter="all">Alle</button>
-          <button class="events-chip" data-filter="today">Heute</button>
-          <button class="events-chip" data-filter="tomorrow">Morgen</button>
-          <button class="events-chip" data-filter="weekend">Wochenende</button>
+        <div class="events-filters events-filters-cat" id="events-cat-filters">
+          <button class="events-chip active" data-cat="top">&#11088; Top picks</button>
+          <button class="events-chip" data-cat="music">&#127925; Musik</button>
+          <button class="events-chip" data-cat="art">&#128444;&#65039; Kunst</button>
+          <button class="events-chip" data-cat="stage">&#127917; B&uuml;hne</button>
+          <button class="events-chip" data-cat="festival">&#127914; Festival</button>
+          <button class="events-chip" data-cat="family">&#128106; Familie</button>
+          <button class="events-chip" data-cat="market">&#128717;&#65039; Markt</button>
+          <button class="events-chip" data-cat="all">Alle</button>
+        </div>
+        <div class="events-filters events-filters-time" id="events-time-filters">
+          <button class="events-chip events-chip-sm active" data-time="all">2 Wochen</button>
+          <button class="events-chip events-chip-sm" data-time="today">Heute</button>
+          <button class="events-chip events-chip-sm" data-time="tomorrow">Morgen</button>
+          <button class="events-chip events-chip-sm" data-time="weekend">Wochenende</button>
         </div>
       </div>
       <div class="loading" id="events-loading"><div class="spinner"></div><p>Events werden geladen...</p></div>

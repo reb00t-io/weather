@@ -1172,7 +1172,7 @@
   });
 
   // ── Events ────────────────────────────────────────────
-  const eventsState = { city: null, all: [], filter: 'all', shown: 25 };
+  const eventsState = { city: null, all: [], cat: 'top', time: 'all', shown: 25 };
   const EVENTS_PAGE = 25;
   const eventsBtn = $('tab-btn-events');
   const eventsList = $('events-list');
@@ -1180,7 +1180,21 @@
   const eventsEmpty = $('events-empty');
   const eventsMoreBtn = $('events-more-btn');
   const eventsTitle = $('events-title');
-  const eventsFiltersWrap = $('events-filters');
+  const eventsCatFilters = $('events-cat-filters');
+  const eventsTimeFilters = $('events-time-filters');
+
+  const CAT_EMOJI = {
+    music: '🎵',     // 🎵
+    stage: '🎭',     // 🎭
+    art:   '🖼️', // 🖼
+    family:'👪',     // 👪
+    market:'🛒️', // 🛒
+    sports:'⚽',           // ⚽
+    talk:  '📚',     // 📚
+    festival:'🎊',   // 🎊
+    civic: '📋',     // 📋
+    other: '✨'            // ✨
+  };
 
   const DAY_HEADERS_F = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'];
   const MONTH_F = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
@@ -1217,29 +1231,37 @@
     return t ? t.slice(0, 5) : null;
   }
 
-  function applyFilter(events, filter) {
-    if (filter === 'all') return events;
-    if (filter === 'today') {
-      const today = isoToday();
-      return events.filter(e => e.start_date === today);
+  function matchesTime(event, time) {
+    if (time === 'all') return true;
+    if (time === 'today')    return event.start_date === isoToday();
+    if (time === 'tomorrow') return event.start_date === isoOffset(1);
+    if (time === 'weekend') {
+      const dow = parseLocalDate(event.start_date).getDay();
+      return dow === 0 || dow === 6;
     }
-    if (filter === 'tomorrow') {
-      const tomorrow = isoOffset(1);
-      return events.filter(e => e.start_date === tomorrow);
+    return true;
+  }
+
+  function matchesCategory(event, cat) {
+    if (cat === 'all') return true;
+    if (cat === 'top') {
+      // Hide pure civic noise; keep events the classifier rates as
+      // generally interesting (score ≥ 2). Falls back to "not civic" for
+      // events that haven't been classified yet.
+      if (event.is_civic) return false;
+      if (event.interest_score == null) return true;
+      return event.interest_score >= 2;
     }
-    if (filter === 'weekend') {
-      // Next Sat & Sun within the loaded range.
-      return events.filter(e => {
-        const d = parseLocalDate(e.start_date);
-        const dow = d.getDay();
-        return dow === 0 || dow === 6;
-      });
-    }
-    return events;
+    return event.category === cat;
+  }
+
+  function applyFilters(events) {
+    return events.filter(e => matchesCategory(e, eventsState.cat)
+                            && matchesTime(e, eventsState.time));
   }
 
   function renderEvents() {
-    const filtered = applyFilter(eventsState.all, eventsState.filter);
+    const filtered = applyFilters(eventsState.all);
     const visible = filtered.slice(0, eventsState.shown);
 
     eventsList.innerHTML = '';
@@ -1303,7 +1325,13 @@
 
     const title = document.createElement('div');
     title.className = 'event-title';
-    title.textContent = ev.title;
+    if (ev.category && CAT_EMOJI[ev.category]) {
+      const em = document.createElement('span');
+      em.className = 'event-cat-emoji';
+      em.textContent = CAT_EMOJI[ev.category];
+      title.appendChild(em);
+    }
+    title.appendChild(document.createTextNode(ev.title));
     body.appendChild(title);
 
     const meta = document.createElement('div');
@@ -1361,11 +1389,21 @@
     }
   }
 
-  eventsFiltersWrap.querySelectorAll('.events-chip').forEach(chip => {
+  eventsCatFilters.querySelectorAll('.events-chip').forEach(chip => {
     chip.addEventListener('click', () => {
-      eventsFiltersWrap.querySelectorAll('.events-chip').forEach(c => c.classList.remove('active'));
+      eventsCatFilters.querySelectorAll('.events-chip').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
-      eventsState.filter = chip.dataset.filter;
+      eventsState.cat = chip.dataset.cat;
+      eventsState.shown = EVENTS_PAGE;
+      renderEvents();
+    });
+  });
+
+  eventsTimeFilters.querySelectorAll('.events-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      eventsTimeFilters.querySelectorAll('.events-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      eventsState.time = chip.dataset.time;
       eventsState.shown = EVENTS_PAGE;
       renderEvents();
     });
