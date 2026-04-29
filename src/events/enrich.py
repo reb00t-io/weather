@@ -309,6 +309,23 @@ def apply_heuristic(events: Iterable[Event]) -> list[Event]:
     return out
 
 
+def apply_heuristic_if_missing(events: Iterable[Event]) -> list[Event]:
+    """Like apply_heuristic, but only fills fields the source didn't already
+    set. Used for sources (e.g. Ticketmaster) that ship their own taxonomy."""
+    out = []
+    for e in events:
+        if e.category is None or e.interest_score is None or e.is_civic is None:
+            c = classify_heuristic(e.title, e.venue)
+            if e.category is None:
+                e.category = c.category
+            if e.interest_score is None:
+                e.interest_score = c.interest_score
+            if e.is_civic is None:
+                e.is_civic = c.is_civic
+        out.append(e)
+    return out
+
+
 def ai_enabled() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
 

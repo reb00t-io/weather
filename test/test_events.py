@@ -11,6 +11,7 @@ os.environ.setdefault("API_KEY", "test-api-key")
 
 from src.events import enrich as events_enrich  # noqa: E402
 from src.events import service as events_service  # noqa: E402
+from src.events import source_ticketmaster as tm  # noqa: E402
 from src.events.api import _resolve_region  # noqa: E402
 from src.events.source_kdb import _normalise  # noqa: E402
 from src.events.store import Event, EventStore  # noqa: E402
@@ -76,16 +77,20 @@ def test_store_orders_timed_before_all_day_same_day(store):
     assert [r.id for r in rows] == ["MORN", "EVE", "ALL"]
 
 
-def test_store_replace_region_atomic(store):
+def test_store_replace_source_only_touches_its_slice(store):
+    """replace_source must keep events from other sources for the same region
+    untouched. Without this, refreshing Ticketmaster would wipe kulturdaten."""
     store.upsert_many([
-        _ev(id="OLD1"),
-        _ev(id="OLD2"),
-        _ev(id="KEEP", region="Munich"),
+        _ev(id="KDB1", region="Berlin", source="kulturdaten.berlin"),
+        _ev(id="KDB2", region="Berlin", source="kulturdaten.berlin"),
+        _ev(id="KEEP", region="Munich", source="kulturdaten.berlin"),
+        _ev(id="TM_OLD", region="Berlin", source="ticketmaster"),
     ])
-    store.replace_region("Berlin", [_ev(id="NEW1")])
+    store.replace_source("Berlin", "ticketmaster",
+                         [_ev(id="TM_NEW", region="Berlin", source="ticketmaster")])
     berlin = store.query("Berlin", "2026-04-29", "2026-05-13")
     munich = store.query("Munich", "2026-04-29", "2026-05-13")
-    assert [r.id for r in berlin] == ["NEW1"]
+    assert {r.id for r in berlin} == {"KDB1", "KDB2", "TM_NEW"}
     assert [r.id for r in munich] == ["KEEP"]
 
 
@@ -328,7 +333,7 @@ def test_parse_response_clamps_score():
 
 # ── Schema preserves enrichment across re-imports ──────────────────────────
 
-def test_replace_region_preserves_ai_classification(store):
+def test_replace_source_preserves_ai_classification(store):
     """AI-enriched rows (enriched_at set) survive a re-import."""
     e1 = _ev(id="E1", title="Vernissage", category="art",
              interest_score=2, is_civic=False, enriched_at=100.0)
@@ -336,7 +341,7 @@ def test_replace_region_preserves_ai_classification(store):
 
     re_imported = _ev(id="E1", title="Vernissage", category=None,
                       interest_score=None, is_civic=None, enriched_at=None)
-    store.replace_region("Berlin", [re_imported])
+    store.replace_source("Berlin", "test", [re_imported])
 
     rows = store.query("Berlin", "2026-04-29", "2026-05-13")
     assert rows[0].category == "art"
@@ -345,20 +350,18 @@ def test_replace_region_preserves_ai_classification(store):
     assert rows[0].enriched_at == 100.0
 
 
-def test_replace_region_lets_heuristic_overwrite_unenriched(store):
+def test_replace_source_lets_heuristic_overwrite_unenriched(store):
     """If prior row was never AI-enriched (enriched_at NULL), a re-import
     with a fresh heuristic-classified event must overwrite it. Regression
     test for the bug where a NULL prior classification was carried forward
     and clobbered the new heuristic result."""
-    # Existing row: heuristic-only or stale; enriched_at is NULL.
     prior = _ev(id="E1", title="Vernissage", category=None,
                 interest_score=None, is_civic=None, enriched_at=None)
     store.upsert_many([prior])
 
-    # Refresh: new event with heuristic classification applied.
     refreshed = _ev(id="E1", title="Vernissage", category="art",
                     interest_score=2, is_civic=False, enriched_at=None)
-    store.replace_region("Berlin", [refreshed])
+    store.replace_source("Berlin", "test", [refreshed])
 
     rows = store.query("Berlin", "2026-04-29", "2026-05-13")
     assert rows[0].category == "art"
@@ -384,3 +387,100 @@ def test_update_classification(store):
     assert rows[0].category == "music"
     assert rows[0].interest_score == 3
     assert rows[0].enriched_at == 42.0
+
+
+# ── Ticketmaster source ────────────────────────────────────────────────────
+
+def _tm_event(**overrides):
+    """Synthesise a TM Discovery API event payload."""
+    base = {
+        "id": "vvG1iZ4abc",
+        "name": "Sample Concert",
+        "url": "https://www.ticketmaster.de/event/abc",
+        "dates": {
+            "start": {
+                "localDate": "2026-04-30",
+                "localTime": "20:00:00",
+                "noSpecificTime": False,
+                "timeTBA": False,
+            },
+            "timezone": "Europe/Berlin",
+        },
+        "_embedded": {
+            "venues": [{"name": "Berlin Arena", "city": {"name": "Berlin"}}]
+        },
+        "classifications": [{
+            "primary": True,
+            "segment": {"name": "Music"},
+            "genre": {"name": "Rock"},
+        }],
+    }
+    base.update(overrides)
+    return base
+
+
+def test_tm_normalise_music_event():
+    ev = tm._normalise(_tm_event(), refreshed_at=10.0)
+    assert ev is not None
+    assert ev.id == "tm_vvG1iZ4abc"           # namespaced
+    assert ev.title == "Sample Concert"
+    assert ev.venue == "Berlin Arena"
+    assert ev.category == "music"
+    assert ev.interest_score == 2             # commercial floor
+    assert ev.is_civic is False
+    assert ev.is_free is False
+    assert ev.source == "ticketmaster"
+    assert ev.start_time == "20:00:00"
+
+
+def test_tm_classify_uses_genre_for_arts_and_theatre():
+    raw = _tm_event(classifications=[{
+        "primary": True,
+        "segment": {"name": "Arts & Theatre"},
+        "genre": {"name": "Theatre"},
+    }])
+    ev = tm._normalise(raw, refreshed_at=0.0)
+    assert ev.category == "stage"
+
+    raw2 = _tm_event(classifications=[{
+        "primary": True,
+        "segment": {"name": "Arts & Theatre"},
+        "genre": {"name": "Visual Arts"},
+    }])
+    ev2 = tm._normalise(raw2, refreshed_at=0.0)
+    assert ev2.category == "art"
+
+
+def test_tm_festival_score_3():
+    raw = _tm_event(name="Lollapalooza Berlin Festival",
+                    classifications=[{
+                        "primary": True,
+                        "segment": {"name": "Music"},
+                        "genre": {"name": "Festivals"},
+                    }])
+    ev = tm._normalise(raw, refreshed_at=0.0)
+    assert ev.category == "festival"
+    assert ev.interest_score == 3
+
+
+def test_tm_handles_missing_time():
+    raw = _tm_event()
+    raw["dates"]["start"]["noSpecificTime"] = True
+    raw["dates"]["start"].pop("localTime", None)
+    ev = tm._normalise(raw, refreshed_at=0.0)
+    assert ev.start_time is None
+
+
+def test_tm_returns_none_on_missing_required():
+    # No name
+    assert tm._normalise(_tm_event(name=""), refreshed_at=0.0) is None
+    # No date
+    raw = _tm_event()
+    raw["dates"]["start"].pop("localDate")
+    assert tm._normalise(raw, refreshed_at=0.0) is None
+
+
+async def test_tm_fetch_disabled_without_key(monkeypatch):
+    monkeypatch.delenv("TICKETMASTER_API_KEY", raising=False)
+    out = await tm.fetch_events()
+    assert out == []

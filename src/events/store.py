@@ -255,25 +255,27 @@ class EventStore:
             finally:
                 conn.close()
 
-    def replace_region(self, region: str, events: Iterable[Event]) -> int:
-        """Replace all events for `region` atomically, preserving enrichment
-        for any IDs that already existed. Returns inserted count."""
+    def replace_source(self, region: str, source: str, events: Iterable[Event]) -> int:
+        """Replace all events for the (region, source) slice atomically,
+        preserving enrichment of IDs that already existed in that slice.
+        Other sources for the same region are untouched."""
         events = list(events)
         with self._write_lock:
             conn = self._connect()
             try:
                 conn.execute("BEGIN")
-                # Capture enrichment of existing region rows so we can carry it
-                # forward to re-imports of the same event ID.
                 prior = {
                     r["id"]: r
                     for r in conn.execute(
                         "SELECT id, category, interest_score, is_civic, enriched_at "
-                        "FROM events WHERE region = ?",
-                        (region,),
+                        "FROM events WHERE region = ? AND source = ?",
+                        (region, source),
                     ).fetchall()
                 }
-                conn.execute("DELETE FROM events WHERE region = ?", (region,))
+                conn.execute(
+                    "DELETE FROM events WHERE region = ? AND source = ?",
+                    (region, source),
+                )
                 if events:
                     rows = [
                         self._merge_for_upsert(e, prior.get(e.id))

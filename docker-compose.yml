@@ -9,6 +9,7 @@ services:
       - UNSPLASH_ACCESS_KEY=${UNSPLASH_ACCESS_KEY:-}
       - FAL_KEY=${FAL_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - TICKETMASTER_API_KEY=${TICKETMASTER_API_KEY:-}
     ports:
       - "${PORT}:${PORT}"
     volumes:
