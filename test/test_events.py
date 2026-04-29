@@ -328,12 +328,12 @@ def test_parse_response_clamps_score():
 
 # ── Schema preserves enrichment across re-imports ──────────────────────────
 
-def test_replace_region_preserves_classification(store):
+def test_replace_region_preserves_ai_classification(store):
+    """AI-enriched rows (enriched_at set) survive a re-import."""
     e1 = _ev(id="E1", title="Vernissage", category="art",
              interest_score=2, is_civic=False, enriched_at=100.0)
     store.upsert_many([e1])
 
-    # Source layer re-imports the same event with no classification fields.
     re_imported = _ev(id="E1", title="Vernissage", category=None,
                       interest_score=None, is_civic=None, enriched_at=None)
     store.replace_region("Berlin", [re_imported])
@@ -343,6 +343,27 @@ def test_replace_region_preserves_classification(store):
     assert rows[0].interest_score == 2
     assert rows[0].is_civic is False
     assert rows[0].enriched_at == 100.0
+
+
+def test_replace_region_lets_heuristic_overwrite_unenriched(store):
+    """If prior row was never AI-enriched (enriched_at NULL), a re-import
+    with a fresh heuristic-classified event must overwrite it. Regression
+    test for the bug where a NULL prior classification was carried forward
+    and clobbered the new heuristic result."""
+    # Existing row: heuristic-only or stale; enriched_at is NULL.
+    prior = _ev(id="E1", title="Vernissage", category=None,
+                interest_score=None, is_civic=None, enriched_at=None)
+    store.upsert_many([prior])
+
+    # Refresh: new event with heuristic classification applied.
+    refreshed = _ev(id="E1", title="Vernissage", category="art",
+                    interest_score=2, is_civic=False, enriched_at=None)
+    store.replace_region("Berlin", [refreshed])
+
+    rows = store.query("Berlin", "2026-04-29", "2026-05-13")
+    assert rows[0].category == "art"
+    assert rows[0].interest_score == 2
+    assert rows[0].is_civic is False
 
 
 def test_query_unenriched(store):

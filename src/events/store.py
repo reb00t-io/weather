@@ -114,17 +114,16 @@ class EventStore:
                 conn.close()
 
     def upsert_many(self, events: Iterable[Event]) -> int:
-        """Insert or replace events. Preserves existing enrichment fields when
-        upserting a row by ID — i.e. re-fetching the same event from the source
-        does not invalidate its prior classification."""
+        """Insert or replace events. Preserves AI-completed classifications
+        (rows where enriched_at is set) so the AI layer's results survive
+        re-imports; otherwise the new event's classification (typically the
+        heuristic just applied) wins."""
         events = list(events)
         if not events:
             return 0
         with self._write_lock:
             conn = self._connect()
             try:
-                # Pull current enrichment state for any rows we're about to
-                # upsert, so we can carry it forward.
                 ids = [e.id for e in events]
                 placeholders = ",".join("?" * len(ids))
                 existing = {
@@ -135,25 +134,10 @@ class EventStore:
                         ids,
                     ).fetchall()
                 }
-                rows = []
-                for e in events:
-                    prev = existing.get(e.id)
-                    if prev is not None:
-                        category = e.category if e.category is not None else prev["category"]
-                        score = e.interest_score if e.interest_score is not None else prev["interest_score"]
-                        civic = (1 if e.is_civic else 0) if e.is_civic is not None else prev["is_civic"]
-                        enriched = e.enriched_at if e.enriched_at is not None else prev["enriched_at"]
-                    else:
-                        category = e.category
-                        score = e.interest_score
-                        civic = (1 if e.is_civic else 0) if e.is_civic is not None else None
-                        enriched = e.enriched_at
-                    rows.append((
-                        e.id, e.region, e.start_date, e.end_date,
-                        e.start_time, e.end_time, e.title, e.venue,
-                        1 if e.is_free else 0, e.source, e.refreshed_at,
-                        category, score, civic, enriched,
-                    ))
+                rows = [
+                    self._merge_for_upsert(e, existing.get(e.id))
+                    for e in events
+                ]
                 conn.executemany(
                     "INSERT OR REPLACE INTO events "
                     "(id, region, start_date, end_date, start_time, end_time, "
@@ -166,6 +150,30 @@ class EventStore:
             finally:
                 conn.close()
         return len(rows)
+
+    @staticmethod
+    def _merge_for_upsert(e: "Event", prev) -> tuple:
+        """Pick the classification fields to write for this row.
+
+        Rule: if the prior row was AI-enriched (enriched_at is set), keep
+        the prior values — the AI's verdict outranks the heuristic. Otherwise
+        the new event's values win (typically a fresh heuristic pass)."""
+        if prev is not None and prev["enriched_at"] is not None:
+            category = prev["category"]
+            score = prev["interest_score"]
+            civic = prev["is_civic"]
+            enriched = prev["enriched_at"]
+        else:
+            category = e.category
+            score = e.interest_score
+            civic = (1 if e.is_civic else 0) if e.is_civic is not None else None
+            enriched = e.enriched_at
+        return (
+            e.id, e.region, e.start_date, e.end_date,
+            e.start_time, e.end_time, e.title, e.venue,
+            1 if e.is_free else 0, e.source, e.refreshed_at,
+            category, score, civic, enriched,
+        )
 
     def update_classification(
         self,
@@ -267,25 +275,10 @@ class EventStore:
                 }
                 conn.execute("DELETE FROM events WHERE region = ?", (region,))
                 if events:
-                    rows = []
-                    for e in events:
-                        prev = prior.get(e.id)
-                        if prev is not None:
-                            category = prev["category"]
-                            score = prev["interest_score"]
-                            civic = prev["is_civic"]
-                            enriched = prev["enriched_at"]
-                        else:
-                            category = e.category
-                            score = e.interest_score
-                            civic = (1 if e.is_civic else 0) if e.is_civic is not None else None
-                            enriched = e.enriched_at
-                        rows.append((
-                            e.id, e.region, e.start_date, e.end_date,
-                            e.start_time, e.end_time, e.title, e.venue,
-                            1 if e.is_free else 0, e.source, e.refreshed_at,
-                            category, score, civic, enriched,
-                        ))
+                    rows = [
+                        self._merge_for_upsert(e, prior.get(e.id))
+                        for e in events
+                    ]
                     conn.executemany(
                         "INSERT INTO events "
                         "(id, region, start_date, end_date, start_time, end_time, "

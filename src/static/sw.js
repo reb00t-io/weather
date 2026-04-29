@@ -1,6 +1,7 @@
-const CACHE_NAME = 'wetter-v1';
+// Bumping CACHE_NAME purges all prior caches on activate, which is the
+// recovery hatch for users stuck on a stale HTML/JS pair.
+const CACHE_NAME = 'wetter-v3';
 const STATIC_ASSETS = [
-  '/',
   '/static/manifest.json',
 ];
 
@@ -21,9 +22,10 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
 
-  // Network-first for API calls
+  // Network-first for API calls.
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       fetch(event.request)
@@ -37,12 +39,34 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-first for static assets
+  // Network-first for HTML navigations so users always get the latest
+  // page (which references the latest versioned static assets) when
+  // online — falling back to cache only when offline. Without this,
+  // a stale cached HTML pins the client to an obsolete app.js.
+  const isHtml = event.request.mode === 'navigate'
+    || (event.request.headers.get('accept') || '').includes('text/html');
+  if (isHtml) {
+    event.respondWith(
+      fetch(event.request)
+        .then((resp) => {
+          if (resp.ok) {
+            const clone = resp.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return resp;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/')))
+    );
+    return;
+  }
+
+  // Cache-first for versioned static assets (?v=… in URLs is the
+  // cache-bust signal).
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((resp) => {
-        if (resp.ok && event.request.method === 'GET') {
+        if (resp.ok) {
           const clone = resp.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
