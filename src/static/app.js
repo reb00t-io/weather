@@ -1,0 +1,1176 @@
+(function() {
+  'use strict';
+
+  const API_KEY = window.__API_KEY || '';
+  const AUTH_HEADERS = API_KEY ? { 'Authorization': 'Bearer ' + API_KEY } : {};
+
+  // ── Icons ─────────────────────────────────────────────
+  const ICONS = {
+    'clear':            ['\u2600\uFE0F', '\uD83C\uDF19'],
+    'mostly-clear':     ['\uD83C\uDF24\uFE0F', '\uD83C\uDF19'],
+    'partly-cloudy':    ['\u26C5', '\u2601\uFE0F'],
+    'overcast':         ['\u2601\uFE0F', '\u2601\uFE0F'],
+    'fog':              ['\uD83C\uDF2B\uFE0F', '\uD83C\uDF2B\uFE0F'],
+    'drizzle-light':    ['\uD83C\uDF26\uFE0F', '\uD83C\uDF26\uFE0F'],
+    'drizzle':          ['\uD83C\uDF26\uFE0F', '\uD83C\uDF26\uFE0F'],
+    'drizzle-heavy':    ['\uD83C\uDF26\uFE0F', '\uD83C\uDF26\uFE0F'],
+    'freezing-drizzle': ['\u2744\uFE0F', '\u2744\uFE0F'],
+    'rain-light':       ['\uD83C\uDF26\uFE0F', '\uD83C\uDF26\uFE0F'],
+    'rain':             ['\uD83C\uDF27\uFE0F', '\uD83C\uDF27\uFE0F'],
+    'rain-heavy':       ['\uD83C\uDF27\uFE0F', '\uD83C\uDF27\uFE0F'],
+    'freezing-rain':    ['\u2744\uFE0F', '\u2744\uFE0F'],
+    'snow-light':       ['\uD83C\uDF28\uFE0F', '\uD83C\uDF28\uFE0F'],
+    'snow':             ['\uD83C\uDF28\uFE0F', '\uD83C\uDF28\uFE0F'],
+    'snow-heavy':       ['\uD83C\uDF28\uFE0F', '\uD83C\uDF28\uFE0F'],
+    'snow-grains':      ['\uD83C\uDF28\uFE0F', '\uD83C\uDF28\uFE0F'],
+    'showers-light':    ['\uD83C\uDF26\uFE0F', '\uD83C\uDF26\uFE0F'],
+    'showers':          ['\uD83C\uDF27\uFE0F', '\uD83C\uDF27\uFE0F'],
+    'showers-heavy':    ['\uD83C\uDF27\uFE0F', '\uD83C\uDF27\uFE0F'],
+    'snow-showers':     ['\uD83C\uDF28\uFE0F', '\uD83C\uDF28\uFE0F'],
+    'snow-showers-heavy':['\uD83C\uDF28\uFE0F', '\uD83C\uDF28\uFE0F'],
+    'thunderstorm':     ['\u26C8\uFE0F', '\u26C8\uFE0F'],
+    'thunderstorm-hail':['\u26C8\uFE0F', '\u26C8\uFE0F'],
+    'unknown':          ['\u2753', '\u2753'],
+  };
+
+  function icon(name, isDay) {
+    const p = ICONS[name] || ICONS['unknown'];
+    return p[isDay ? 0 : 1];
+  }
+
+  const DAYS = ['So','Mo','Di','Mi','Do','Fr','Sa'];
+  const DAYS_F = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'];
+  const MON = ['Jan','Feb','M\u00E4r','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+
+  function windDir(d) {
+    if (d == null) return '';
+    const dirs = ['N','NNO','NO','ONO','O','OSO','SO','SSO','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return dirs[Math.round(d / 22.5) % 16];
+  }
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+  // ── Condition -> card class ───────────────────────────
+  function condClass(iconName, isDay) {
+    if (!isDay) {
+      if (iconName === 'clear' || iconName === 'mostly-clear') return 'night-clear';
+      return 'night';
+    }
+    if (iconName === 'clear' || iconName === 'mostly-clear') return 'clear';
+    if (iconName.includes('thunder')) return 'thunder';
+    if (iconName.includes('snow') || iconName.includes('freezing')) return 'snow';
+    if (iconName.includes('rain') || iconName.includes('drizzle') || iconName.includes('shower')) return 'rain';
+    if (iconName === 'fog') return 'fog';
+    return 'cloudy';
+  }
+
+  // ── DOM ────────────────────────────────────────────────
+  const $ = (s) => document.getElementById(s);
+  const searchInput = $('search');
+  const searchResults = $('search-results');
+  const loading = $('loading');
+  const placeholder = $('placeholder');
+  const weatherContent = $('weather-content');
+
+  let searchTimeout = null;
+  let currentCity = null;
+
+  // ── Tabs ──────────────────────────────────────────────
+  const tabBtns = document.querySelectorAll('.tab-btn');
+  let radarInitialized = false;
+
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      $('panel-' + btn.dataset.tab).classList.add('active');
+
+      if (btn.dataset.tab === 'radar' && !radarInitialized) {
+        initRadar();
+        radarInitialized = true;
+      } else if (btn.dataset.tab === 'radar' && window._radarMap) {
+        window._radarMap.invalidateSize();
+      }
+    });
+  });
+
+  // ── Recent cities ─────────────────────────────────────
+  const MAX_RECENT = 5;
+  const searchClear = $('search-clear');
+
+  function getRecentCities() {
+    try {
+      return JSON.parse(localStorage.getItem('weather_recent') || '[]');
+    } catch(e) { return []; }
+  }
+
+  function addRecentCity(city) {
+    let recents = getRecentCities();
+    // Remove duplicate (same lat/lon)
+    recents = recents.filter(r => !(r.lat === city.lat && r.lon === city.lon));
+    recents.unshift(city);
+    if (recents.length > MAX_RECENT) recents = recents.slice(0, MAX_RECENT);
+    localStorage.setItem('weather_recent', JSON.stringify(recents));
+  }
+
+  function updateClearBtn() {
+    if (searchInput.value.length > 0) {
+      searchClear.classList.add('visible');
+    } else {
+      searchClear.classList.remove('visible');
+    }
+  }
+
+  // ── Search ────────────────────────────────────────────
+  searchInput.addEventListener('input', function() {
+    clearTimeout(searchTimeout);
+    updateClearBtn();
+    const q = this.value.trim();
+    if (q.length === 0) {
+      showRecentCities();
+      return;
+    }
+    // Show matching recents immediately, fetch geocode after debounce
+    showMatchingRecents(q);
+    searchTimeout = setTimeout(() => fetchGeocode(q), 250);
+  });
+
+  function showMatchingRecents(q) {
+    const recents = getRecentCities();
+    const qLower = q.toLowerCase();
+    const matching = recents.filter(r => {
+      const haystack = [r.name, r.admin1, r.country].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(qLower);
+    });
+    if (matching.length) {
+      searchResults.innerHTML = '';
+      const label = document.createElement('div');
+      label.className = 'search-section-label';
+      label.textContent = 'Zuletzt gesucht';
+      searchResults.appendChild(label);
+      for (const r of matching) searchResults.appendChild(createRecentItem(r));
+      searchResults.classList.add('open');
+    } else {
+      searchResults.innerHTML = '';
+      searchResults.classList.remove('open');
+    }
+  }
+
+  searchInput.addEventListener('focus', function() {
+    const q = this.value.trim();
+    if (q.length === 0) {
+      showRecentCities();
+    } else {
+      showMatchingRecents(q);
+    }
+  });
+
+  searchClear.addEventListener('click', function() {
+    searchInput.value = '';
+    updateClearBtn();
+    searchResults.classList.remove('open');
+    searchInput.focus();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.search-wrap')) searchResults.classList.remove('open');
+  });
+
+  function showRecentCities() {
+    const recents = getRecentCities();
+    searchResults.innerHTML = '';
+    if (!recents.length) { searchResults.classList.remove('open'); return; }
+    const label = document.createElement('div');
+    label.className = 'search-section-label';
+    label.textContent = 'Zuletzt gesucht';
+    searchResults.appendChild(label);
+    for (const r of recents) {
+      searchResults.appendChild(createRecentItem(r));
+    }
+    searchResults.classList.add('open');
+  }
+
+  function createRecentItem(city) {
+    const div = document.createElement('div');
+    div.className = 'search-result-item recent';
+    div.innerHTML =
+      '<svg class="recent-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>' +
+      '<div class="recent-info"><div class="search-result-name">' + esc(city.name) + '</div>' +
+      '<div class="search-result-region">' + esc([city.admin1 !== city.name ? city.admin1 : null, city.country].filter(Boolean).join(', ')) + '</div></div>' +
+      '<button class="recent-delete" aria-label="Entfernen"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>';
+    div.querySelector('.recent-info').addEventListener('click', () => selectCity(city));
+    div.querySelector('.recent-icon').addEventListener('click', () => selectCity(city));
+    div.querySelector('.recent-delete').addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeRecentCity(city);
+      div.remove();
+      if (!searchResults.querySelector('.search-result-item')) searchResults.classList.remove('open');
+    });
+    return div;
+  }
+
+  function removeRecentCity(city) {
+    let recents = getRecentCities();
+    recents = recents.filter(r => !(r.lat === city.lat && r.lon === city.lon));
+    localStorage.setItem('weather_recent', JSON.stringify(recents));
+  }
+
+  async function fetchGeocode(q) {
+    try {
+      const r = await fetch('/api/geocode?q=' + encodeURIComponent(q), { headers: AUTH_HEADERS });
+      const data = await r.json();
+      renderSearch(data, q);
+    } catch(e) { console.error(e); }
+  }
+
+  function renderSearch(results, query) {
+    searchResults.innerHTML = '';
+
+    // Filter recent cities matching the query and show on top
+    const qLower = (query || '').toLowerCase();
+    const recents = getRecentCities();
+    const matchingRecents = qLower
+      ? recents.filter(r => {
+          const haystack = [r.name, r.admin1, r.country].filter(Boolean).join(' ').toLowerCase();
+          return haystack.includes(qLower);
+        })
+      : [];
+
+    // Deduplicate: remove API results that match a recent city (same lat/lon)
+    const filteredResults = results.filter(res =>
+      !matchingRecents.some(rc => rc.lat === res.lat && rc.lon === res.lon)
+    );
+
+    if (!matchingRecents.length && !filteredResults.length) {
+      searchResults.classList.remove('open');
+      return;
+    }
+
+    if (matchingRecents.length) {
+      const label = document.createElement('div');
+      label.className = 'search-section-label';
+      label.textContent = 'Zuletzt gesucht';
+      searchResults.appendChild(label);
+      for (const r of matchingRecents) {
+        searchResults.appendChild(createRecentItem(r));
+      }
+    }
+
+    if (filteredResults.length) {
+      if (matchingRecents.length) {
+        const label = document.createElement('div');
+        label.className = 'search-section-label';
+        label.textContent = 'Suchergebnisse';
+        searchResults.appendChild(label);
+      }
+      for (const r of filteredResults) {
+        const div = document.createElement('div');
+        div.className = 'search-result-item';
+        div.innerHTML = '<div class="search-result-name">' + esc(r.name) + '</div>' +
+          '<div class="search-result-region">' + esc([r.admin1 !== r.name ? r.admin1 : null, r.country].filter(Boolean).join(', ')) + '</div>';
+        div.addEventListener('click', () => selectCity(r));
+        searchResults.appendChild(div);
+      }
+    }
+
+    searchResults.classList.add('open');
+  }
+
+  function selectCity(city) {
+    currentCity = city;
+    searchInput.value = '';
+    updateClearBtn();
+    searchResults.classList.remove('open');
+    searchInput.blur();
+    addRecentCity(city);
+    localStorage.setItem('weather_city', JSON.stringify(city));
+    fetchWeather(city);
+
+    // Center radar on city if initialized
+    if (window._radarMap) {
+      window._radarMap.setView([city.lat, city.lon], 8);
+    }
+  }
+
+  // ── Fetch Weather ─────────────────────────────────────
+  async function fetchWeather(city) {
+    loading.classList.add('visible');
+    placeholder.style.display = 'none';
+    weatherContent.style.display = 'none';
+
+    try {
+      const r = await fetch('/api/weather?lat=' + city.lat + '&lon=' + city.lon, { headers: AUTH_HEADERS });
+      const data = await r.json();
+      if (data.error) throw new Error(data.error);
+      renderWeather(city, data);
+    } catch(e) {
+      console.error(e);
+      placeholder.style.display = 'block';
+      placeholder.querySelector('p').textContent = 'Fehler beim Laden.';
+    } finally {
+      loading.classList.remove('visible');
+    }
+  }
+
+  // ── Render Weather ────────────────────────────────────
+  function renderWeather(city, data) {
+    const c = data.current;
+    const now = new Date();
+    const card = $('current-card');
+
+    // Dynamic gradient
+    card.className = 'current-card fade-in ' + condClass(c.icon, c.is_day);
+
+    const adminSuffix = city.admin1 && city.admin1 !== city.name ? ', ' + city.admin1 : '';
+    $('current-location').textContent = city.name + adminSuffix;
+    $('current-date').textContent = DAYS_F[now.getDay()] + ', ' + now.getDate() + '. ' + MON[now.getMonth()];
+    $('current-icon').textContent = icon(c.icon, c.is_day);
+
+    // Match the current hourly entry (used below for detail tiles).
+    const ch = data.hourly.find(h => {
+      const hd = new Date(h.time);
+      return hd.getHours() === now.getHours() && hd.getDate() === now.getDate();
+    }) || {};
+
+    // DWD station source
+    const srcEl = $('current-source');
+    if (c.source) {
+      srcEl.textContent = 'DWD ' + c.source;
+      srcEl.style.display = '';
+    } else {
+      srcEl.style.display = 'none';
+    }
+
+    $('current-details').innerHTML =
+      tempTile(Math.round(c.temp)) +
+      detailCard('\uD83D\uDCA8', Math.round(c.wind || 0) + ' km/h', 'Wind') +
+      detailCard('\uD83D\uDCA7', (ch.precip_prob ?? '--') + '%', 'Regen') +
+      detailCard('\uD83D\uDCA6', (c.humidity ?? ch.humidity ?? '--') + '%', 'Feuchte');
+
+    // City background image (weather-aware)
+    loadCityImage(city, c.icon, c.is_day);
+
+    // Warnings
+    renderWarnings(data.warnings || []);
+
+    // Air quality
+    renderAqi(data.aqi);
+
+    renderHourly(data.hourly, now);
+    renderTempChart(data.daily);
+    renderDaily(data.daily, data.hourly);
+    renderPollen(data.pollen);
+    weatherContent.style.display = 'block';
+  }
+
+  // ── Warnings ──────────────────────────────────────────
+  function renderWarnings(warnings) {
+    const wrap = $('warnings-wrap');
+    wrap.innerHTML = '';
+    if (!warnings.length) return;
+
+    for (const w of warnings) {
+      const sev = (w.severity || 'minor').toLowerCase();
+      const cls = ['extreme','severe','moderate'].includes(sev) ? sev : 'minor';
+      const div = document.createElement('div');
+      div.className = 'warning-banner severity-' + cls;
+      let exp = '';
+      if (w.expires) {
+        const d = new Date(w.expires);
+        exp = '<div class="warning-expires">bis ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' Uhr, ' + d.getDate() + '. ' + MON[d.getMonth()] + '</div>';
+      }
+      div.innerHTML = '<div class="warning-headline">\u26A0\uFE0F ' + esc(w.headline || w.event) + '</div>' + exp +
+        '<div class="warning-desc">' + esc(w.description) + '</div>';
+      div.addEventListener('click', () => div.classList.toggle('expanded'));
+      wrap.appendChild(div);
+    }
+  }
+
+  // ── Air Quality ───────────────────────────────────────
+  function renderAqi(aqi) {
+    const el = $('aqi-card');
+    if (!aqi) { el.style.display = 'none'; return; }
+    el.style.display = 'flex';
+    const details = [
+      aqi.pm2_5 != null ? 'PM2.5: ' + Math.round(aqi.pm2_5) : '',
+      aqi.pm10 != null ? 'PM10: ' + Math.round(aqi.pm10) : '',
+      aqi.no2 != null ? 'NO\u2082: ' + Math.round(aqi.no2) : '',
+      aqi.o3 != null ? 'O\u2083: ' + Math.round(aqi.o3) : '',
+    ].filter(Boolean).join(' \u00B7 ');
+    el.innerHTML =
+      '<div class="aqi-gauge ' + aqi.color + '">' + Math.round(aqi.eaqi) + '</div>' +
+      '<div class="aqi-info">' +
+        '<div class="aqi-title">Luftqualit\u00E4t</div>' +
+        '<div class="aqi-level">' + esc(aqi.level) + '</div>' +
+        '<div class="aqi-details">' + details + '</div>' +
+      '</div>';
+  }
+
+  // ── Pollen ────────────────────────────────────────────
+  function renderPollen(pollen) {
+    const sec = $('pollen-section');
+    const el = $('pollen-card');
+    if (!pollen) {
+      sec.style.display = 'none';
+      el.style.display = 'none';
+      return;
+    }
+    sec.style.display = 'block';
+    el.style.display = 'flex';
+    const species = pollen.species || [];
+    if (!species.length) {
+      el.innerHTML = '<div class="pollen-empty">Keine Pollen aktiv</div>';
+      return;
+    }
+    el.innerHTML = species.map(s =>
+      '<div class="pollen-row">' +
+        '<div class="pollen-emoji">' + s.emoji + '</div>' +
+        '<div class="pollen-name">' + esc(s.name) + '</div>' +
+        '<div class="pollen-value">' + s.value + ' /m³</div>' +
+        '<div class="pollen-level ' + s.color + '">' + esc(s.level_label) + '</div>' +
+      '</div>'
+    ).join('');
+  }
+
+  // ── City Background Image ─────────────────────────────
+  let imageCache = {};
+
+  function weatherCategory(iconName) {
+    if (!iconName) return '';
+    if (iconName === 'clear' || iconName === 'mostly-clear') return 'sun';
+    if (iconName.includes('snow') || iconName.includes('freezing')) return 'snow';
+    if (iconName.includes('rain') || iconName.includes('drizzle') || iconName.includes('shower')) return 'rain';
+    return 'cloud';
+  }
+
+  function loadCityImage(city, weatherIcon, isDay) {
+    const bgEl = $('current-card-bg');
+    bgEl.classList.remove('loaded');
+
+    const baseName = city.name.split(',')[0].trim();
+    const weather = weatherCategory(weatherIcon);
+    const isNight = isDay === 0 || isDay === false ? '1' : '0';
+    const cacheKey = baseName + ':' + weather + ':' + isNight;
+
+    if (imageCache[cacheKey]) {
+      bgEl.style.backgroundImage = 'url(' + imageCache[cacheKey].url + ')';
+      bgEl.classList.add('loaded');
+      renderAttribution(imageCache[cacheKey].attribution);
+      return;
+    }
+
+    const params = 'city=' + encodeURIComponent(baseName)
+      + (weather ? '&weather=' + weather : '')
+      + '&is_night=' + isNight;
+
+    fetch('/api/city-image?' + params, { headers: AUTH_HEADERS })
+      .then(r => r.json())
+      .then(data => {
+        if (!data.url) return;
+        const img = new Image();
+        img.onload = () => {
+          imageCache[cacheKey] = { url: img.src, attribution: data.attribution };
+          bgEl.style.backgroundImage = 'url(' + img.src + ')';
+          bgEl.classList.add('loaded');
+          renderAttribution(data.attribution);
+        };
+        img.onerror = () => {};
+        img.src = data.url;
+      })
+      .catch(() => {});
+  }
+
+  function renderAttribution(attr) {
+    let el = $('image-attribution');
+    if (!el) return;
+    if (attr && attr.name) {
+      el.innerHTML = 'Foto: <a href="' + esc(attr.link) + '" target="_blank" rel="noopener">' + esc(attr.name) + '</a> / Unsplash';
+      el.style.display = '';
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  function detailCard(ic, val, label) {
+    return '<div class="current-detail">' +
+      '<div class="current-detail-icon">' + ic + '</div>' +
+      '<div class="current-detail-val">' + esc(val) + '</div>' +
+      '<div class="current-detail-label">' + label + '</div></div>';
+  }
+
+  function tempTile(val) {
+    return '<div class="current-detail current-detail-temp">' +
+      '<div class="current-detail-temp-val">' + val +
+        '<span class="current-detail-temp-unit">°</span></div></div>';
+  }
+
+  // ── Hourly (chart + items) ─────────────────────────────
+  let hourlyItems = []; // store for click handler
+
+  function renderHourly(hourly, now) {
+    const outer = $('hourly-outer');
+    outer.innerHTML = '';
+    const curHour = now.getHours();
+
+    let startIdx = 0;
+    for (let i = 0; i < hourly.length; i++) {
+      const hd = new Date(hourly[i].time);
+      if (hd >= new Date(now.getFullYear(), now.getMonth(), now.getDate(), curHour)) {
+        startIdx = i; break;
+      }
+    }
+
+    hourlyItems = hourly.slice(startIdx, startIdx + 25);
+    const n = hourlyItems.length;
+    if (!n) return;
+
+    const colW = 29;
+    const padL = 11, padR = 11;
+    const totalW = padL + n * colW + padR;
+
+    const topArea = 18;
+    const chartH = 130;
+    const tempPad = 16;
+    const botGap = 3;
+    const botRowH = 14;
+    const iconArea = 30;
+    const barPad = 3;
+    const H = topArea + chartH + botGap + botRowH + botGap + botRowH + botGap + iconArea + 4;
+
+    let tMin = Infinity, tMax = -Infinity;
+    for (const h of hourlyItems) {
+      if (h.temp < tMin) tMin = h.temp;
+      if (h.temp > tMax) tMax = h.temp;
+    }
+    const tRange = (tMax - tMin) || 1;
+
+    const curveTop = topArea;
+    function yPos(temp) {
+      const ratio = (temp - tMin) / tRange;
+      return curveTop + chartH - tempPad - ratio * (chartH - 2 * tempPad);
+    }
+
+    let svg = '<svg class="hourly-chart-svg" width="' + totalW + '" height="' + H + '" viewBox="0 0 ' + totalW + ' ' + H + '">';
+
+    svg += '<defs><linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">';
+    svg += '<stop offset="0%" stop-color="rgba(59,130,246,0.25)"/>';
+    svg += '<stop offset="100%" stop-color="rgba(59,130,246,0)"/>';
+    svg += '</linearGradient></defs>';
+
+    // Selection highlight (behind everything)
+    svg += '<rect id="hourly-sel-bg" x="' + padL + '" y="0" width="' + colW + '" height="' + H + '" fill="rgba(59,130,246,0.12)" rx="4"/>';
+
+    // Hour labels
+    hourlyItems.forEach((h, i) => {
+      const d = new Date(h.time);
+      const cx = padL + i * colW + colW / 2;
+      const label = i === 0 ? 'Jetzt' : pad(d.getHours()) + 'h';
+      svg += '<text x="' + cx + '" y="13" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="600" font-family="inherit">' + label + '</text>';
+    });
+
+    // Temperature curve
+    const pts = hourlyItems.map((h, i) => ({
+      x: padL + i * colW + colW / 2,
+      y: yPos(h.temp),
+      val: Math.round(h.temp)
+    }));
+
+    if (pts.length >= 2) {
+      let areaPath = 'M' + pts[0].x + ',' + pts[0].y;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i - 1)];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[Math.min(pts.length - 1, i + 2)];
+        const t = 0.3;
+        areaPath += ' C' + (p1.x + (p2.x - p0.x) * t) + ',' + (p1.y + (p2.y - p0.y) * t) +
+          ' ' + (p2.x - (p3.x - p1.x) * t) + ',' + (p2.y - (p3.y - p1.y) * t) +
+          ' ' + p2.x + ',' + p2.y;
+      }
+      svg += '<path d="' + areaPath + ' V' + (curveTop + chartH) + ' H' + pts[0].x + ' Z" fill="url(#hg)"/>';
+      svg += '<path d="' + areaPath + '" fill="none" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>';
+    }
+
+    pts.forEach(p => {
+      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="2.5" fill="#60a5fa"/>';
+      svg += '<text x="' + p.x + '" y="' + (p.y - 7) + '" text-anchor="middle" fill="#f1f5f9" font-size="9" font-weight="700" font-family="inherit">' + p.val + '°</text>';
+    });
+
+    // Sun bars
+    const sunY = curveTop + chartH + botGap;
+    hourlyItems.forEach((h, i) => {
+      const x = padL + i * colW + barPad;
+      const w = colW - barPad * 2;
+      if (h.is_day) {
+        const sl = sunLevelFromCloud(h.cloud);
+        svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="' + sunBarColor(sl) + '"/>';
+      } else {
+        svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="rgb(55,65,81)"/>';
+      }
+    });
+
+    // Rain bars
+    const rainY = sunY + botRowH + botGap;
+    hourlyItems.forEach((h, i) => {
+      const x = padL + i * colW + barPad;
+      const w = colW - barPad * 2;
+      const prob = h.precip_prob || 0;
+      const hasRain = prob > 20;
+      const rainAlpha = hasRain ? (0.15 + (prob / 100) * 0.5) : 0.06;
+      svg += '<rect x="' + x + '" y="' + rainY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="rgba(96,165,250,' + rainAlpha.toFixed(2) + ')"/>';
+      if (hasRain) {
+        svg += '<text x="' + (x + w / 2) + '" y="' + (rainY + botRowH / 2 + 3) + '" text-anchor="middle" font-size="9">💧</text>';
+      }
+    });
+
+    // Weather icons (bottom row) — sized to nearly fill column width.
+    // The crescent-moon glyph fills its em-box more aggressively than
+    // sun/cloud emojis, so render it slightly smaller for visual parity.
+    const iconY = rainY + botRowH + botGap + 23;
+    hourlyItems.forEach((h, i) => {
+      const cx = padL + i * colW + colW / 2;
+      const g = icon(h.icon, h.is_day);
+      const fs = g === '🌙' ? 16 : 22;
+      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="' + fs + '">' + g + '</text>';
+    });
+
+    // Invisible click targets (on top of everything)
+    hourlyItems.forEach((h, i) => {
+      const x = padL + i * colW;
+      svg += '<rect x="' + x + '" y="0" width="' + colW + '" height="' + H + '" fill="transparent" data-idx="' + i + '" style="cursor:pointer" class="h-col"/>';
+    });
+
+    svg += '</svg>';
+    outer.innerHTML = svg;
+
+    // Click handling via SVG rects
+    const selBg = outer.querySelector('#hourly-sel-bg');
+    outer.querySelectorAll('.h-col').forEach(rect => {
+      rect.addEventListener('click', () => {
+        const idx = parseInt(rect.dataset.idx);
+        selBg.setAttribute('x', padL + idx * colW);
+        selectHourDetails(hourlyItems[idx]);
+      });
+    });
+
+    selectHourDetails(hourlyItems[0]);
+  }
+
+
+  function selectHourDetails(h) {
+    $('current-icon').textContent = icon(h.icon, h.is_day);
+
+    $('current-details').innerHTML =
+      tempTile(Math.round(h.temp)) +
+      detailCard('\uD83D\uDCA8', Math.round(h.wind || 0) + ' km/h ' + windDir(h.wind_dir), 'Wind') +
+      detailCard('\uD83D\uDCA7', (h.precip_prob ?? '--') + '%', 'Regen') +
+      detailCard('\uD83D\uDCA6', (h.humidity ?? '--') + '%', 'Feuchte');
+  }
+
+  // ── Sun bar: smooth interpolation through 3 stops ──
+  const SUN_C = [255, 210, 60];
+  const MIXED_C = [255, 230, 110];
+  const CLOUD_C = [200, 200, 200];
+
+  function lerpColor(a, b, t) {
+    return [
+      Math.round(a[0] + (b[0] - a[0]) * t),
+      Math.round(a[1] + (b[1] - a[1]) * t),
+      Math.round(a[2] + (b[2] - a[2]) * t),
+    ];
+  }
+
+  // sun = 0..1 (fraction of sun). Lerp grey → light-yellow → sun-yellow.
+  function sunBarColor(sun) {
+    const s = Math.max(0, Math.min(1, sun || 0));
+    const c = s <= 0.5
+      ? lerpColor(CLOUD_C, MIXED_C, s / 0.5)
+      : lerpColor(MIXED_C, SUN_C, (s - 0.5) / 0.5);
+    return 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+  }
+
+  function sunLevelFromCloud(cloud) {
+    // cloud 0-100 -> sun 1-0
+    return 1 - Math.min(100, Math.max(0, cloud || 0)) / 100;
+  }
+
+  function sunLevelFromIcon(iconName) {
+    if (iconName === 'clear' || iconName === 'mostly-clear') return 1.0;
+    if (iconName === 'partly-cloudy') return 0.55;
+    if (iconName === 'overcast') return 0.1;
+    if (iconName === 'fog') return 0.08;
+    if (iconName.includes('thunder')) return 0.0;
+    if (iconName.includes('heavy') || iconName.includes('snow')) return 0.0;
+    if (iconName.includes('rain') || iconName.includes('drizzle') || iconName.includes('shower')) return 0.15;
+    return 0.25;
+  }
+
+  // ── Temperature Chart (SVG) ────────────────────────────
+  function renderTempChart(daily) {
+    const el = $('temp-chart-scroll');
+    const n = daily.length;
+    if (!n) { el.innerHTML = ''; return; }
+
+    const colW = 29;
+    const padL = 11, padR = 11;
+    const W = padL + n * colW + padR;
+    const topArea = 36;   // day labels
+    const chartH = 170;   // main chart area
+    const botRowH = 14;   // each bottom row
+    const botGap = 3;
+    const iconArea = 30;  // weather pictogram row
+    const H = topArea + chartH + botGap + botRowH + botGap + botRowH + botGap + iconArea + 4;
+
+    // Temp range
+    let allMin = Infinity, allMax = -Infinity;
+    for (const d of daily) {
+      if (d.temp_min < allMin) allMin = d.temp_min;
+      if (d.temp_max > allMax) allMax = d.temp_max;
+    }
+    const tempRange = (allMax - allMin) || 1;
+    const tempPad = 16;
+
+    function yPos(temp) {
+      const ratio = (temp - allMin) / tempRange;
+      return topArea + chartH - tempPad - ratio * (chartH - 2 * tempPad);
+    }
+
+    let svg = '<svg class="temp-chart-svg" width="' + W + '" height="' + H + '" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
+
+    // Gradient fills for area under curves
+    svg += '<defs>';
+    svg += '<linearGradient id="maxGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(245,158,11,0.2)"/><stop offset="100%" stop-color="rgba(245,158,11,0)"/></linearGradient>';
+    svg += '<linearGradient id="minGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(96,165,250,0.15)"/><stop offset="100%" stop-color="rgba(96,165,250,0)"/></linearGradient>';
+    svg += '</defs>';
+
+    // Weekend backgrounds
+    daily.forEach((d, i) => {
+      const date = new Date(d.date + 'T00:00:00');
+      const dow = date.getDay();
+      const x = padL + i * colW;
+      if (dow === 0 || dow === 6) {
+        svg += '<rect x="' + x + '" y="0" width="' + colW + '" height="' + (topArea + chartH) + '" fill="rgba(148,163,184,0.06)"/>';
+      }
+    });
+
+    // Day labels
+    daily.forEach((d, i) => {
+      const date = new Date(d.date + 'T00:00:00');
+      const dow = date.getDay();
+      const cx = padL + i * colW + colW / 2;
+      const isWe = dow === 0 || dow === 6;
+      const label = i === 0 ? 'Heute' : DAYS[dow];
+      svg += '<text x="' + cx + '" y="20" text-anchor="middle" fill="' + (isWe ? '#f1f5f9' : '#94a3b8') + '" font-size="9" font-weight="' + (isWe ? '700' : '600') + '" font-family="inherit">' + label + '</text>';
+    });
+
+    // Points
+    const maxPts = [], minPts = [];
+    daily.forEach((d, i) => {
+      const cx = padL + i * colW + colW / 2;
+      maxPts.push({ x: cx, y: yPos(d.temp_max), val: Math.round(d.temp_max) });
+      minPts.push({ x: cx, y: yPos(d.temp_min), val: Math.round(d.temp_min) });
+    });
+
+    function smoothPath(pts) {
+      if (pts.length < 2) return '';
+      let path = 'M' + pts[0].x + ',' + pts[0].y;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1];
+        const p3 = pts[Math.min(pts.length - 1, i + 2)];
+        const t = 0.3;
+        path += ' C' + (p1.x + (p2.x - p0.x) * t) + ',' + (p1.y + (p2.y - p0.y) * t) +
+          ' ' + (p2.x - (p3.x - p1.x) * t) + ',' + (p2.y - (p3.y - p1.y) * t) +
+          ' ' + p2.x + ',' + p2.y;
+      }
+      return path;
+    }
+
+    // Area fills under curves
+    const maxPath = smoothPath(maxPts);
+    const minPath = smoothPath(minPts);
+    const chartBottom = topArea + chartH;
+    svg += '<path d="' + maxPath + ' V' + chartBottom + ' H' + maxPts[0].x + ' Z" fill="url(#maxGrad)"/>';
+    svg += '<path d="' + minPath + ' V' + chartBottom + ' H' + minPts[0].x + ' Z" fill="url(#minGrad)"/>';
+
+    // Lines (thinner)
+    svg += '<path d="' + maxPath + '" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round"/>';
+    svg += '<path d="' + minPath + '" fill="none" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round"/>';
+
+    // Max dots + labels
+    maxPts.forEach(p => {
+      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="2.5" fill="#f59e0b"/>';
+      svg += '<text x="' + p.x + '" y="' + (p.y - 7) + '" text-anchor="middle" fill="#f59e0b" font-size="9" font-weight="700" font-family="inherit">' + p.val + '</text>';
+    });
+
+    // Min dots + labels
+    minPts.forEach(p => {
+      svg += '<circle cx="' + p.x + '" cy="' + p.y + '" r="2.5" fill="#60a5fa"/>';
+      svg += '<text x="' + p.x + '" y="' + (p.y + 13) + '" text-anchor="middle" fill="#60a5fa" font-size="9" font-weight="700" font-family="inherit">' + p.val + '</text>';
+    });
+
+    // ── Bottom bars: Row 1 = Sunshine, Row 2 = Rain ──
+    const sunY = topArea + chartH + botGap;
+    const rainY = sunY + botRowH + botGap;
+    const barPad = 3;
+
+    daily.forEach((d, i) => {
+      const x = padL + i * colW + barPad;
+      const w = colW - barPad * 2;
+
+      // Sun bar color: drive from mean cloud cover so it matches the
+      // hourly chart. Open-Meteo's sunshine_duration sits at ~daylight
+      // on most days, so it can't differentiate cloudy days.
+      const sunFrac = d.cloud_mean != null
+        ? sunLevelFromCloud(d.cloud_mean)
+        : sunLevelFromIcon(d.icon || '');
+      const sunH = d.sun_hours || 0;
+
+      // Sunshine bar with hours label
+      svg += '<rect x="' + x + '" y="' + sunY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="' + sunBarColor(sunFrac) + '"/>';
+      const sunLabel = sunH >= 1 ? Math.round(sunH) + 'h' : (sunH > 0 ? '<1h' : '');
+      if (sunLabel) {
+        svg += '<text x="' + (x + w / 2) + '" y="' + (sunY + botRowH / 2 + 3) + '" text-anchor="middle" fill="#555" font-size="7" font-weight="600" font-family="inherit">' + sunLabel + '</text>';
+      }
+
+      // Rain bar (blue intensity by probability)
+      const prob = d.precip_prob || 0;
+      const hasRain = prob > 20 || (d.precip_sum && d.precip_sum > 0.5);
+      const rainAlpha = hasRain ? (0.15 + (prob / 100) * 0.5) : 0.06;
+      svg += '<rect x="' + x + '" y="' + rainY + '" width="' + w + '" height="' + botRowH + '" rx="3" fill="rgba(96,165,250,' + rainAlpha.toFixed(2) + ')"/>';
+      if (hasRain) {
+        svg += '<text x="' + (x + w / 2) + '" y="' + (rainY + botRowH / 2 + 3) + '" text-anchor="middle" font-size="9">\uD83D\uDCA7</text>';
+      }
+    });
+
+    // Weather pictograms (bottom row) — sized to nearly fill column width.
+    const iconY = rainY + botRowH + botGap + 22;
+    daily.forEach((d, i) => {
+      const cx = padL + i * colW + colW / 2;
+      svg += '<text x="' + cx + '" y="' + iconY + '" text-anchor="middle" font-size="22">' + icon(d.icon, 1) + '</text>';
+    });
+
+    svg += '</svg>';
+    el.innerHTML = svg;
+  }
+
+  // ── Daily ─────────────────────────────────────────────
+  function renderDaily(daily, hourly) {
+    const el = $('daily-card');
+    el.innerHTML = '';
+
+    let gMin = Infinity, gMax = -Infinity;
+    for (const d of daily) {
+      if (d.temp_min < gMin) gMin = d.temp_min;
+      if (d.temp_max > gMax) gMax = d.temp_max;
+    }
+    const range = gMax - gMin || 1;
+
+    daily.forEach((d, i) => {
+      const date = new Date(d.date + 'T00:00:00');
+      const isToday = i === 0;
+      const dayName = isToday ? 'Heute' : DAYS[date.getDay()];
+      const dateStr = date.getDate() + '. ' + MON[date.getMonth()];
+      const leftPct = ((d.temp_min - gMin) / range) * 100;
+      const widthPct = ((d.temp_max - d.temp_min) / range) * 100;
+
+      const wrapper = document.createElement('div');
+
+      const row = document.createElement('div');
+      row.className = 'daily-row';
+      row.innerHTML =
+        '<div class="daily-day">' + dayName + '<span class="daily-day-sub">' + dateStr + '</span></div>' +
+        '<div class="daily-icon">' + icon(d.icon, 1) + '</div>' +
+        '<div class="daily-bar-wrap">' +
+          '<span class="daily-temp-low">' + Math.round(d.temp_min) + '\u00B0</span>' +
+          '<div class="daily-bar"><div class="daily-bar-fill" style="left:' + leftPct + '%;width:' + Math.max(widthPct, 5) + '%"></div></div>' +
+          '<span class="daily-temp-high">' + Math.round(d.temp_max) + '\u00B0</span>' +
+        '</div>' +
+        '<div class="daily-precip">' + (d.precip_prob > 0 ? '\uD83D\uDCA7 ' + d.precip_prob + '%' : '') + '</div>';
+
+      const detail = document.createElement('div');
+      detail.className = 'daily-detail';
+      detail.id = 'dd-' + i;
+
+      row.addEventListener('click', () => {
+        const wasOpen = detail.classList.contains('open');
+        document.querySelectorAll('.daily-detail.open').forEach(d => d.classList.remove('open'));
+        if (!wasOpen) {
+          detail.classList.add('open');
+          renderDayDetail(detail, d, hourly);
+        }
+      });
+
+      wrapper.appendChild(row);
+      wrapper.appendChild(detail);
+      el.appendChild(wrapper);
+    });
+  }
+
+  function renderDayDetail(el, day, hourly) {
+    const dayH = hourly.filter(h => h.time && h.time.startsWith(day.date));
+
+    const feelsStr = (day.feels_min != null && day.feels_max != null)
+      ? Math.round(day.feels_min) + '\u00B0 / ' + Math.round(day.feels_max) + '\u00B0'
+      : '--';
+    let html = '<div class="daily-detail-grid">' +
+      '<div class="daily-detail-item">\uD83C\uDF21\uFE0F Gef\u00FChlt: <strong>' + feelsStr + '</strong></div>' +
+      '<div class="daily-detail-item">\uD83D\uDCA8 Wind: <strong>' + Math.round(day.wind_max) + ' km/h ' + windDir(day.wind_dir) + '</strong></div>' +
+      '<div class="daily-detail-item">\u2600\uFE0F UV: <strong>' + (day.uv_max != null ? day.uv_max : '--') + '</strong></div>' +
+      '<div class="daily-detail-item">\uD83C\uDF05 Aufgang: <strong>' + (day.sunrise ? day.sunrise.slice(11,16) : '--') + '</strong></div>' +
+      '<div class="daily-detail-item">\uD83C\uDF07 Untergang: <strong>' + (day.sunset ? day.sunset.slice(11,16) : '--') + '</strong></div>' +
+      '<div class="daily-detail-item">\uD83C\uDF27\uFE0F Niederschlag: <strong>' + (day.precip_sum != null ? day.precip_sum.toFixed(1) + ' mm' : '--') + '</strong></div>' +
+      '<div class="daily-detail-item">\uD83D\uDCA7 Wahrsch.: <strong>' + (day.precip_prob ?? '--') + '%</strong></div>' +
+      '</div>';
+
+    if (dayH.length) {
+      html += '<div class="daily-hourly-scroll">';
+      for (const h of dayH) {
+        const t = new Date(h.time);
+        html += '<div class="dh-item">' +
+          '<span class="dh-time">' + pad(t.getHours()) + ':00</span>' +
+          '<span class="dh-icon">' + icon(h.icon, h.is_day) + '</span>' +
+          '<span class="dh-temp">' + Math.round(h.temp) + '\u00B0</span>' +
+          (h.precip_prob > 0 ? '<span class="dh-precip">' + h.precip_prob + '%</span>' : '') +
+          '</div>';
+      }
+      html += '</div>';
+    }
+
+    el.innerHTML = html;
+  }
+
+  // ════════════════════════════════════════════════════════
+  // RADAR (RainViewer API + Leaflet)
+  // ════════════════════════════════════════════════════════
+  let radarMap, radarLayer, radarFrames = [], radarIdx = 0, radarPlaying = false, radarTimer = null;
+
+  function initRadar() {
+    const center = currentCity ? [currentCity.lat, currentCity.lon] : [51.1657, 10.4515]; // Germany center
+    const zoom = currentCity ? 7 : 5;
+
+    radarMap = L.map('radar-map', {
+      center: center,
+      zoom: zoom,
+      minZoom: 4,
+      maxZoom: 12,
+      zoomControl: false,
+      attributionControl: false,
+    });
+
+    window._radarMap = radarMap;
+
+    // Panes: basemap < radar < labels
+    radarMap.createPane('basemap');
+    radarMap.getPane('basemap').style.zIndex = 200;
+
+    radarMap.createPane('labels');
+    radarMap.getPane('labels').style.zIndex = 500;
+
+    radarMap.createPane('radar');
+    radarMap.getPane('radar').style.zIndex = 400;
+
+    // CartoDB Voyager base (free, no API key)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png', {
+      maxZoom: 18,
+      subdomains: 'abcd',
+      pane: 'basemap',
+    }).addTo(radarMap);
+
+    // Labels on top of radar
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+      maxZoom: 18,
+      subdomains: 'abcd',
+      pane: 'labels',
+    }).addTo(radarMap);
+
+    // Zoom control
+    L.control.zoom({ position: 'topright' }).addTo(radarMap);
+
+    // Attribution
+    L.control.attribution({ position: 'bottomleft', prefix: false })
+      .addAttribution('<a href="https://carto.com/">CARTO</a> | <a href="https://www.openstreetmap.org/copyright">OSM</a> | <a href="https://www.rainviewer.com/">RainViewer</a>')
+      .addTo(radarMap);
+
+    // City marker
+    if (currentCity) {
+      L.circleMarker([currentCity.lat, currentCity.lon], {
+        radius: 6,
+        fillColor: '#e11d48',
+        fillOpacity: 1,
+        color: '#fff',
+        weight: 2,
+      }).addTo(radarMap);
+    }
+
+    loadRadarFrames();
+
+    // Controls
+    $('radar-play-btn').addEventListener('click', toggleRadarPlay);
+    $('radar-slider').addEventListener('input', (e) => {
+      radarIdx = parseInt(e.target.value);
+      showRadarFrame(radarIdx);
+    });
+  }
+
+  async function loadRadarFrames() {
+    try {
+      const r = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+      const data = await r.json();
+      const host = data.host;
+      const past = (data.radar && data.radar.past) || [];
+      const nowcast = (data.radar && data.radar.nowcast) || [];
+
+      radarFrames = [];
+      for (const f of past) {
+        radarFrames.push({ time: f.time, url: host + f.path + '/256/{z}/{x}/{y}/6/1_1.png', type: 'past' });
+      }
+      for (const f of nowcast) {
+        radarFrames.push({ time: f.time, url: host + f.path + '/256/{z}/{x}/{y}/6/1_1.png', type: 'forecast' });
+      }
+
+      const pastCount = past.length;
+
+      if (radarFrames.length) {
+        const slider = $('radar-slider');
+        slider.max = radarFrames.length - 1;
+        radarIdx = pastCount > 0 ? pastCount - 1 : 0;
+        slider.value = radarIdx;
+
+        // Gradient on slider track: blue = past, amber = forecast
+        const pastPct = (pastCount / radarFrames.length * 100).toFixed(1);
+        slider.style.background = 'linear-gradient(90deg, rgba(96,165,250,0.35) 0%, rgba(96,165,250,0.35) ' + pastPct + '%, rgba(251,191,36,0.35) ' + pastPct + '%, rgba(251,191,36,0.35) 100%)';
+
+        // Preload ALL layers (hidden) so first playback doesn't flicker
+        radarLayers = {};
+        radarFrames.forEach((frame, i) => {
+          radarLayers[i] = L.tileLayer(frame.url, {
+            opacity: 0,
+            pane: 'radar',
+          });
+          radarLayers[i].addTo(radarMap);
+        });
+
+        showRadarFrame(radarIdx);
+      }
+    } catch(e) {
+      console.error('Radar load error:', e);
+      $('radar-time').textContent = 'Fehler beim Laden';
+    }
+  }
+
+  // Keep all radar tile layers cached to avoid flicker
+  let radarLayers = {};
+
+  function showRadarFrame(idx) {
+    const frame = radarFrames[idx];
+    if (!frame || !radarLayers[idx]) return;
+
+    // Hide previous, show current
+    if (radarLayer && radarLayer !== radarLayers[idx]) {
+      radarLayer.setOpacity(0);
+    }
+    radarLayers[idx].setOpacity(0.85);
+    radarLayer = radarLayers[idx];
+
+    // Update time display
+    const d = new Date(frame.time * 1000);
+    const isForecast = frame.type === 'forecast';
+    $('radar-time').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' Uhr';
+    const label = $('radar-label');
+    label.textContent = isForecast ? 'Vorhersage' : 'Niederschlag';
+    if (isForecast) { label.classList.add('forecast'); } else { label.classList.remove('forecast'); }
+    $('radar-slider').value = idx;
+  }
+
+  function stopRadarPlay() {
+    radarPlaying = false;
+    clearInterval(radarTimer);
+    $('play-icon').style.display = 'block';
+    $('pause-icon').style.display = 'none';
+  }
+
+  function toggleRadarPlay() {
+    radarPlaying = !radarPlaying;
+    $('play-icon').style.display = radarPlaying ? 'none' : 'block';
+    $('pause-icon').style.display = radarPlaying ? 'block' : 'none';
+
+    if (radarPlaying) {
+      // If at end, restart from beginning
+      if (radarIdx >= radarFrames.length - 1) {
+        radarIdx = 0;
+        showRadarFrame(radarIdx);
+      }
+      radarTimer = setInterval(() => {
+        radarIdx++;
+        if (radarIdx >= radarFrames.length) {
+          stopRadarPlay();
+          return;
+        }
+        showRadarFrame(radarIdx);
+      }, 500);
+    } else {
+      clearInterval(radarTimer);
+    }
+  }
+
+  // ── Geolocation ────────────────────────────────────────
+  const geoBtn = $('geo-btn');
+  geoBtn.addEventListener('click', () => {
+    if (!navigator.geolocation) return;
+    geoBtn.classList.add('loading');
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        geoBtn.classList.remove('loading');
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        try {
+          const r = await fetch('/api/reverse-geocode?lat=' + lat + '&lon=' + lon, { headers: AUTH_HEADERS });
+          const city = await r.json();
+          city.lat = lat;
+          city.lon = lon;
+          selectCity(city);
+        } catch(e) {
+          selectCity({ name: 'Mein Standort', admin1: '', country: '', lat: lat, lon: lon });
+        }
+      },
+      (err) => {
+        geoBtn.classList.remove('loading');
+        console.log('Geolocation denied:', err.message);
+      },
+      { enableHighAccuracy: false, timeout: 10000 }
+    );
+  });
+
+  // ── Init ──────────────────────────────────────────────
+  const saved = localStorage.getItem('weather_city');
+  if (saved) {
+    try {
+      const city = JSON.parse(saved);
+      currentCity = city;
+      fetchWeather(city);
+    } catch(e) {}
+  }
+
+  // ── Resume from background ────────────────────────────
+  let lastVisible = Date.now();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && currentCity) {
+      const elapsed = Date.now() - lastVisible;
+      // Refresh if app was in background for 5+ minutes
+      if (elapsed > 5 * 60 * 1000) {
+        fetchWeather(currentCity);
+      }
+    }
+    if (document.visibilityState === 'hidden') {
+      lastVisible = Date.now();
+    }
+  });
+
+  // ── PWA Service Worker ────────────────────────────────
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+  }
+
+})();
