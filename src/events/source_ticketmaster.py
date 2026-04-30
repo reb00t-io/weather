@@ -33,30 +33,38 @@ PAGE_SIZE = 200       # API default cap
 MAX_PAGES = 5         # safety cap; > 1000 events in 14 days would be unusual
 
 # Map Ticketmaster (segment, genre) → our category enum.
-# Segment is always present on commercial events; genre refines stage vs art.
+# TM returns labels in the requested locale, so both English and German
+# names need to be recognised. Genre wins over segment when present
+# (refines "Arts & Theatre" into stage vs art vs festival vs family).
 _GENRE_TO_CATEGORY = {
-    "Theatre":      "stage",
-    "Comedy":       "stage",
-    "Dance":        "stage",
-    "Performance":  "stage",
-    "Cabaret":      "stage",
-    "Magic & Illusion": "stage",
-    "Film":         "art",
-    "Cinema":       "art",
-    "Visual Arts":  "art",
-    "Fine Art":     "art",
-    "Multimedia":   "art",
-    "Festivals":    "festival",
-    "Festival":     "festival",
+    # stage
+    "Theatre": "stage", "Theater": "stage",
+    "Comedy": "stage",
+    "Dance": "stage", "Tanz": "stage",
+    "Performance": "stage",
+    "Cabaret": "stage", "Kabarett": "stage",
+    "Varieté": "stage", "Variety": "stage",
+    "Magic & Illusion": "stage", "Zauberei": "stage",
+    "Musical": "stage",
+    # art / film
+    "Film": "art", "Cinema": "art", "Kino": "art",
+    "Visual Arts": "art", "Bildende Kunst": "art",
+    "Fine Art": "art",
+    "Multimedia": "art",
+    # festival
+    "Festivals": "festival", "Festival": "festival",
+    # family — appears under "Verschiedenes" segment, not under a Family segment
+    "Familie": "family", "Family": "family",
+    "Children's Theatre": "family", "Kindertheater": "family",
 }
 
 _SEGMENT_TO_CATEGORY = {
-    "Music":          "music",
-    "Sports":         "sports",
-    "Arts & Theatre": "stage",   # default; genre may refine to art/festival
-    "Family":         "family",
-    "Miscellaneous":  "other",
-    "Film":           "art",
+    "Music": "music", "Musik": "music",
+    "Sports": "sports", "Sport": "sports",
+    "Arts & Theatre": "stage", "Kunst & Theater": "stage",
+    "Family": "family", "Familie": "family",
+    "Miscellaneous": "other", "Verschiedenes": "other",
+    "Film": "art",
 }
 
 

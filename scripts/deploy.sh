@@ -131,6 +131,8 @@ printf -v api_key_q '%q' "$API_KEY"
 
 printf -v unsplash_q '%q' "${UNSPLASH_ACCESS_KEY:-}"
 printf -v fal_q '%q' "${FAL_KEY:-}"
+printf -v anthropic_q '%q' "${ANTHROPIC_API_KEY:-}"
+printf -v ticketmaster_q '%q' "${TICKETMASTER_API_KEY:-}"
 
 retry_cmd 3 2 ssh "${SSH_OPTS[@]}" "$REMOTE" 'bash -se' <<EOF
 cat > ~/${IMAGE_NAME}/.env <<'ENVEOF'
@@ -138,6 +140,8 @@ PORT=$port_q
 API_KEY=$api_key_q
 UNSPLASH_ACCESS_KEY=$unsplash_q
 FAL_KEY=$fal_q
+ANTHROPIC_API_KEY=$anthropic_q
+TICKETMASTER_API_KEY=$ticketmaster_q
 ENVEOF
 EOF
 echo "ok"
