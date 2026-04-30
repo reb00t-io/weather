@@ -142,6 +142,50 @@ def _normalise(raw: dict, *, refreshed_at: float) -> Event | None:
     )
 
 
+def _dedup_key(raw: dict) -> tuple | None:
+    """Compute a stable per-show key for collapsing ticket-tier duplicates.
+
+    Ticketmaster lists "ROSALÍA: LUX TOUR 2026", "ROSALÍA … | VIP Packages",
+    and "ROSALÍA … | Logen-Seat in der Ticketmaster Suite" as three distinct
+    events with different IDs but the same artist/date/venue. Group them
+    by (primary attraction id, local date, venue id). Returns None if any
+    component is missing — caller falls back to the event's own id."""
+    embedded = raw.get("_embedded") or {}
+    attractions = embedded.get("attractions") or []
+    venues = embedded.get("venues") or []
+    start_date = ((raw.get("dates") or {}).get("start") or {}).get("localDate")
+    if not (attractions and venues and start_date):
+        return None
+    return (
+        attractions[0].get("id") or "",
+        start_date,
+        venues[0].get("id") or "",
+    )
+
+
+def _dedup(raw_events: list[dict]) -> list[dict]:
+    """Collapse ticket-tier duplicates. Within each group, keep the entry
+    whose name has no '|' (the base ticket); fall back to the shortest
+    name. Events without a usable dedup key pass through unchanged."""
+    groups: dict[tuple, list[dict]] = {}
+    passthrough: list[dict] = []
+    for raw in raw_events:
+        key = _dedup_key(raw)
+        if key is None:
+            passthrough.append(raw)
+        else:
+            groups.setdefault(key, []).append(raw)
+    out = list(passthrough)
+    for items in groups.values():
+        if len(items) == 1:
+            out.append(items[0])
+            continue
+        # Prefer base ticket (no "|"); break ties by shortest name.
+        items.sort(key=lambda e: ("|" in (e.get("name") or ""), len(e.get("name") or "")))
+        out.append(items[0])
+    return out
+
+
 async def fetch_events(
     *,
     start: date | None = None,
@@ -180,7 +224,7 @@ async def fetch_events(
         client = httpx.AsyncClient(timeout=20.0)
     try:
         ts = now_ts()
-        out: list[Event] = []
+        all_raw: list[dict] = []
         for page in range(MAX_PAGES):
             params = {**params_base, "page": str(page)}
             r = await client.get(f"{TM_BASE}/events.json", params=params)
@@ -190,26 +234,27 @@ async def fetch_events(
             r.raise_for_status()
             payload = r.json()
             embedded = payload.get("_embedded") or {}
-            raw_events = embedded.get("events") or []
-            for raw in raw_events:
-                ev = _normalise(raw, refreshed_at=ts)
-                if ev is not None:
-                    out.append(ev)
+            all_raw.extend(embedded.get("events") or [])
             page_info = payload.get("page") or {}
-            total_pages = page_info.get("totalPages", 0)
-            if page + 1 >= total_pages:
+            if page + 1 >= page_info.get("totalPages", 0):
                 break
-        # De-duplicate: TM occasionally returns the same event on multiple
-        # pages near a totalPages edge. Keep the first occurrence.
-        seen = set()
-        unique = []
-        for e in out:
-            if e.id in seen:
+
+        # Dedup ticket-tier duplicates first (groups by attraction+date+venue),
+        # then dedup by id (catches occasional cross-page repeats).
+        deduped = _dedup(all_raw)
+        seen_ids = set()
+        out: list[Event] = []
+        for raw in deduped:
+            ev = _normalise(raw, refreshed_at=ts)
+            if ev is None or ev.id in seen_ids:
                 continue
-            seen.add(e.id)
-            unique.append(e)
-        logger.info("events.tm.fetch: %d unique events", len(unique))
-        return unique
+            seen_ids.add(ev.id)
+            out.append(ev)
+        logger.info(
+            "events.tm.fetch: %d events after dedup (raw %d)",
+            len(out), len(all_raw),
+        )
+        return out
     finally:
         if own_client:
             await client.aclose()

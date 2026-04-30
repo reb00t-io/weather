@@ -1184,16 +1184,17 @@
   const eventsTimeFilters = $('events-time-filters');
 
   const CAT_EMOJI = {
-    music: '🎵',     // 🎵
-    stage: '🎭',     // 🎭
-    art:   '🖼️', // 🖼
-    family:'👪',     // 👪
-    market:'🛒️', // 🛒
-    sports:'⚽',           // ⚽
-    talk:  '📚',     // 📚
-    festival:'🎊',   // 🎊
-    civic: '📋',     // 📋
-    other: '✨'            // ✨
+    music:    '🎵',
+    stage:    '🎭',
+    art:      '🖼️',
+    film:     '🎬',
+    family:   '👪',
+    market:   '🛒️',
+    sports:   '⚽',
+    talk:     '📚',
+    festival: '🎊',
+    civic:    '📋',
+    other:    '✨'
   };
 
   const DAY_HEADERS_F = ['Sonntag','Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag'];

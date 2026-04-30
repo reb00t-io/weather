@@ -32,7 +32,7 @@ from .store import Event, now_ts
 logger = logging.getLogger(__name__)
 
 CATEGORIES = (
-    "music", "stage", "art", "family",
+    "music", "stage", "art", "film", "family",
     "market", "sports", "talk", "festival", "civic", "other",
 )
 
@@ -165,6 +165,7 @@ _AI_PROMPT = (
     "- music: concerts, DJs, choirs, live bands\n"
     "- stage: theatre, dance, comedy, performance, opera\n"
     "- art: exhibitions, vernissages, museum events, guided art tours\n"
+    "- film: cinema screenings, films at a Kino, movie nights\n"
     "- family: events aimed at children and families\n"
     "- market: street/food/flea/craft markets\n"
     "- sports: sports events, tournaments, runs\n"

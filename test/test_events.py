@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -12,6 +12,7 @@ os.environ.setdefault("API_KEY", "test-api-key")
 from src.events import enrich as events_enrich  # noqa: E402
 from src.events import service as events_service  # noqa: E402
 from src.events import source_ticketmaster as tm  # noqa: E402
+from src.events import source_yorck as yorck  # noqa: E402
 from src.events.api import _resolve_region  # noqa: E402
 from src.events.source_kdb import _normalise  # noqa: E402
 from src.events.store import Event, EventStore  # noqa: E402
@@ -484,3 +485,179 @@ async def test_tm_fetch_disabled_without_key(monkeypatch):
     monkeypatch.delenv("TICKETMASTER_API_KEY", raising=False)
     out = await tm.fetch_events()
     assert out == []
+
+
+def _tm_raw_with(name, attr_id="K_ROSALIA", venue_id="V_UBER", date="2026-05-01"):
+    """Raw TM payload tailored for dedup tests."""
+    return {
+        "id": f"tm_{name.replace(' ', '_')}",
+        "name": name,
+        "dates": {"start": {"localDate": date}},
+        "_embedded": {
+            "venues": [{"id": venue_id, "name": "Uber Arena"}],
+            "attractions": [{"id": attr_id, "name": "ROSALÍA"}],
+        },
+        "classifications": [{"primary": True,
+                             "segment": {"name": "Music"},
+                             "genre": {"name": "Pop"}}],
+    }
+
+
+def test_tm_dedup_collapses_ticket_tiers():
+    """The classic ROSALÍA case: base + VIP + Logen-Seat all share
+    (attraction, date, venue) and must collapse to the base."""
+    raws = [
+        _tm_raw_with("ROSALÍA: LUX TOUR 2026 | VIP Packages"),
+        _tm_raw_with("ROSALÍA: LUX TOUR 2026"),
+        _tm_raw_with("ROSALÍA: LUX TOUR 2026 | Logen-Seat in der Ticketmaster Suite"),
+    ]
+    deduped = tm._dedup(raws)
+    assert len(deduped) == 1
+    assert deduped[0]["name"] == "ROSALÍA: LUX TOUR 2026"   # base ticket wins
+
+
+def test_tm_dedup_keeps_distinct_dates():
+    """Same artist + venue on different nights are different shows."""
+    raws = [
+        _tm_raw_with("Peaches Tour 2026", date="2026-05-01"),
+        _tm_raw_with("Peaches Tour 2026", date="2026-05-02"),
+    ]
+    assert len(tm._dedup(raws)) == 2
+
+
+def test_tm_dedup_keeps_distinct_venues():
+    """Same artist on the same date at different venues are different shows."""
+    raws = [
+        _tm_raw_with("ROSALÍA: LUX TOUR 2026", venue_id="V_UBER"),
+        _tm_raw_with("ROSALÍA: LUX TOUR 2026", venue_id="V_VELODROM"),
+    ]
+    assert len(tm._dedup(raws)) == 2
+
+
+def test_tm_dedup_passes_through_when_attractions_missing():
+    """Some events (rare) have no attractions array — those can't be
+    grouped, so they pass through as-is rather than collapsing wrongly."""
+    raw_no_attr = {
+        "id": "tm_xyz",
+        "name": "Some Event",
+        "dates": {"start": {"localDate": "2026-05-01"}},
+        "_embedded": {"venues": [{"id": "V"}]},
+    }
+    out = tm._dedup([raw_no_attr, raw_no_attr])
+    assert len(out) == 2  # both pass through
+
+
+# ── Yorck cinema source ────────────────────────────────────────────────────
+
+def _yorck_session(start_time, cinema_name):
+    return {
+        "sys": {"id": f"sess-{start_time}-{cinema_name}"},
+        "fields": {
+            "startTime": start_time,
+            "cinema": {"fields": {"name": cinema_name}},
+        },
+    }
+
+
+def _yorck_film(title, slug, sessions):
+    return {
+        "sys": {"id": f"film-{slug}"},
+        "fields": {"title": title, "slug": slug, "sessions": sessions},
+    }
+
+
+def _yorck_data(films, promoted_slugs=()):
+    return {
+        "props": {
+            "pageProps": {
+                "films": films,
+                "top5PromotedSpecials": [
+                    {"slug": s} for s in promoted_slugs
+                ],
+            }
+        }
+    }
+
+
+def test_yorck_collapses_same_day_sessions_to_one_event():
+    """Two showtimes of the same film on the same day at the same cinema
+    must produce ONE event with the earliest start_time. Goal: cards
+    represent films-per-day, not individual showtimes."""
+    today = date.today()
+    today_iso = today.isoformat()
+    data = _yorck_data([_yorck_film("Rose", "rose", [
+        _yorck_session(f"{today_iso}T17:30:00+02:00", "delphi LUX"),
+        _yorck_session(f"{today_iso}T19:30:00+02:00", "delphi LUX"),
+        _yorck_session(f"{today_iso}T21:30:00+02:00", "delphi LUX"),
+    ])])
+    events = yorck._events_in_window(data, start=today, days=14, refreshed_at=0.0)
+    assert len(events) == 1
+    e = events[0]
+    assert e.title == "Rose"
+    assert e.start_time == "17:30:00"
+    assert e.category == "film"
+    assert e.is_civic is False
+    assert e.source == "yorck"
+    assert e.region == "Berlin"
+
+
+def test_yorck_groups_per_day_separately():
+    """Same film on two different days → two events."""
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+    data = _yorck_data([_yorck_film("Rose", "rose", [
+        _yorck_session(f"{today.isoformat()}T19:30:00+02:00", "delphi LUX"),
+        _yorck_session(f"{tomorrow.isoformat()}T19:30:00+02:00", "delphi LUX"),
+    ])])
+    events = yorck._events_in_window(data, start=today, days=14, refreshed_at=0.0)
+    assert len(events) == 2
+    assert {e.start_date for e in events} == {today.isoformat(), tomorrow.isoformat()}
+
+
+def test_yorck_multi_cinema_venue_label():
+    """A film showing at multiple cinemas on the same day collapses to
+    one event with a label that summarises all venues without dumping
+    every name into the card."""
+    today = date.today().isoformat()
+    data = _yorck_data([_yorck_film("Rose", "rose", [
+        _yorck_session(f"{today}T19:00:00+02:00", "delphi LUX"),
+        _yorck_session(f"{today}T20:00:00+02:00", "Kant Kino"),
+        _yorck_session(f"{today}T21:00:00+02:00", "Rollberg"),
+    ])])
+    events = yorck._events_in_window(data, start=date.today(), days=14, refreshed_at=0.0)
+    assert len(events) == 1
+    assert "+2 Kinos" in events[0].venue   # delphi LUX +2 Kinos
+
+
+def test_yorck_window_filtering():
+    """Sessions outside the days window are excluded."""
+    today = date.today()
+    way_later = (today + timedelta(days=60)).isoformat()
+    data = _yorck_data([_yorck_film("Future Film", "fut", [
+        _yorck_session(f"{way_later}T19:00:00+02:00", "delphi LUX"),
+    ])])
+    events = yorck._events_in_window(data, start=today, days=14, refreshed_at=0.0)
+    assert events == []
+
+
+def test_yorck_promoted_film_gets_score_3():
+    today = date.today().isoformat()
+    data = _yorck_data(
+        [_yorck_film("Hot Film", "hot", [
+            _yorck_session(f"{today}T19:00:00+02:00", "delphi LUX"),
+        ])],
+        promoted_slugs=["hot"],
+    )
+    events = yorck._events_in_window(data, start=date.today(), days=14, refreshed_at=0.0)
+    assert events[0].interest_score == 3
+
+
+def test_yorck_skips_film_without_sessions():
+    """Films with no sessions in the window contribute nothing."""
+    data = _yorck_data([_yorck_film("Empty", "empty", [])])
+    events = yorck._events_in_window(data, start=date.today(), days=14, refreshed_at=0.0)
+    assert events == []
+
+
+def test_yorck_parse_next_data_handles_missing_blob():
+    assert yorck._parse_next_data("<html><body>no script here</body></html>") is None

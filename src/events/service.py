@@ -10,7 +10,7 @@ import asyncio
 import logging
 from datetime import date, timedelta
 
-from . import enrich, source_kdb, source_ticketmaster
+from . import enrich, source_kdb, source_ticketmaster, source_yorck
 from .store import Event, EventStore
 
 logger = logging.getLogger(__name__)
@@ -43,9 +43,10 @@ async def refresh_berlin(days: int = DEFAULT_DAYS) -> int:
     kick off AI refinement in the background. Returns total events
     written across sources."""
     async with _refresh_lock:
-        kdb_events, tm_events = await asyncio.gather(
+        kdb_events, tm_events, yorck_events = await asyncio.gather(
             source_kdb.fetch_events(days=days),
             source_ticketmaster.fetch_events(days=days),
+            source_yorck.fetch_events(days=days),
             return_exceptions=True,
         )
         store = get_store()
@@ -63,9 +64,8 @@ async def refresh_berlin(days: int = DEFAULT_DAYS) -> int:
             )
 
         if isinstance(tm_events, list):
-            # TM events arrive pre-categorised from the segment/genre map.
-            # Run heuristic only on the rare uncategorised row so we always
-            # have a category set.
+            # TM events arrive pre-categorised from the segment/genre map;
+            # heuristic only fills the rare gap.
             tm_events = enrich.apply_heuristic_if_missing(tm_events)
             total += store.replace_source(
                 source_ticketmaster.REGION, source_ticketmaster.SOURCE_ID, tm_events
@@ -74,6 +74,18 @@ async def refresh_berlin(days: int = DEFAULT_DAYS) -> int:
             logger.exception(
                 "events.refresh_berlin: ticketmaster fetch failed",
                 exc_info=tm_events,
+            )
+
+        if isinstance(yorck_events, list):
+            # Yorck rows are always category=film and pre-scored.
+            yorck_events = enrich.apply_heuristic_if_missing(yorck_events)
+            total += store.replace_source(
+                source_yorck.REGION, source_yorck.SOURCE_ID, yorck_events
+            )
+        else:
+            logger.exception(
+                "events.refresh_berlin: yorck fetch failed",
+                exc_info=yorck_events,
             )
 
         store.delete_before((date.today() - timedelta(days=1)).isoformat())
