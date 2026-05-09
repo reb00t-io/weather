@@ -35,6 +35,11 @@ class Event:
     interest_score: int | None = None   # 0..3
     is_civic: bool | None = None        # True for bureaucratic/admin items
     enriched_at: float | None = None    # timestamp of last classifier run
+    # Venue location/link (used by the cinema flow to compute distance and
+    # link out to the cinema's program page; optional for other sources).
+    venue_url: str | None = None
+    venue_lat: float | None = None
+    venue_lon: float | None = None
 
     def to_json(self) -> dict:
         return {
@@ -46,6 +51,9 @@ class Event:
             "end_time": self.end_time,
             "title": self.title,
             "venue": self.venue,
+            "venue_url": self.venue_url,
+            "venue_lat": self.venue_lat,
+            "venue_lon": self.venue_lon,
             "is_free": self.is_free,
             "source": self.source,
             "category": self.category,
@@ -92,7 +100,10 @@ class EventStore:
                         category        TEXT,
                         interest_score  INTEGER,
                         is_civic        INTEGER,
-                        enriched_at     REAL
+                        enriched_at     REAL,
+                        venue_url       TEXT,
+                        venue_lat       REAL,
+                        venue_lon       REAL
                     )
                 """)
                 conn.execute(
@@ -106,6 +117,9 @@ class EventStore:
                     ("interest_score", "ALTER TABLE events ADD COLUMN interest_score INTEGER"),
                     ("is_civic",       "ALTER TABLE events ADD COLUMN is_civic INTEGER"),
                     ("enriched_at",    "ALTER TABLE events ADD COLUMN enriched_at REAL"),
+                    ("venue_url",      "ALTER TABLE events ADD COLUMN venue_url TEXT"),
+                    ("venue_lat",      "ALTER TABLE events ADD COLUMN venue_lat REAL"),
+                    ("venue_lon",      "ALTER TABLE events ADD COLUMN venue_lon REAL"),
                 ):
                     if col not in existing:
                         conn.execute(ddl)
@@ -142,8 +156,9 @@ class EventStore:
                     "INSERT OR REPLACE INTO events "
                     "(id, region, start_date, end_date, start_time, end_time, "
                     " title, venue, is_free, source, refreshed_at, "
-                    " category, interest_score, is_civic, enriched_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " category, interest_score, is_civic, enriched_at, "
+                    " venue_url, venue_lat, venue_lon) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 conn.commit()
@@ -173,6 +188,7 @@ class EventStore:
             e.start_time, e.end_time, e.title, e.venue,
             1 if e.is_free else 0, e.source, e.refreshed_at,
             category, score, civic, enriched,
+            e.venue_url, e.venue_lat, e.venue_lon,
         )
 
     def update_classification(
@@ -285,8 +301,9 @@ class EventStore:
                         "INSERT INTO events "
                         "(id, region, start_date, end_date, start_time, end_time, "
                         " title, venue, is_free, source, refreshed_at, "
-                        " category, interest_score, is_civic, enriched_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        " category, interest_score, is_civic, enriched_at, "
+                        " venue_url, venue_lat, venue_lon) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         rows,
                     )
                 conn.commit()
@@ -315,6 +332,9 @@ def _row_to_event(r) -> Event:
         interest_score=r["interest_score"] if "interest_score" in keys else None,
         is_civic=(bool(r["is_civic"]) if r["is_civic"] is not None else None) if "is_civic" in keys else None,
         enriched_at=r["enriched_at"] if "enriched_at" in keys else None,
+        venue_url=r["venue_url"] if "venue_url" in keys else None,
+        venue_lat=r["venue_lat"] if "venue_lat" in keys else None,
+        venue_lon=r["venue_lon"] if "venue_lon" in keys else None,
     )
 
 

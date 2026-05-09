@@ -579,10 +579,11 @@ def _yorck_data(films, promoted_slugs=()):
     }
 
 
-def test_yorck_collapses_same_day_sessions_to_one_event():
-    """Two showtimes of the same film on the same day at the same cinema
-    must produce ONE event with the earliest start_time. Goal: cards
-    represent films-per-day, not individual showtimes."""
+def test_yorck_collapses_same_day_same_cinema_sessions_to_one_event():
+    """Multiple showtimes of the same film on the same day at the same
+    cinema collapse to ONE event carrying the earliest start_time. Goal:
+    cards represent films-per-cinema-per-day so the UI can dedup across
+    times on the client and rank cinemas by distance."""
     today = date.today()
     today_iso = today.isoformat()
     data = _yorck_data([_yorck_film("Rose", "rose", [
@@ -594,6 +595,7 @@ def test_yorck_collapses_same_day_sessions_to_one_event():
     assert len(events) == 1
     e = events[0]
     assert e.title == "Rose"
+    assert e.venue == "delphi LUX"
     assert e.start_time == "17:30:00"
     assert e.category == "film"
     assert e.is_civic is False
@@ -602,7 +604,7 @@ def test_yorck_collapses_same_day_sessions_to_one_event():
 
 
 def test_yorck_groups_per_day_separately():
-    """Same film on two different days → two events."""
+    """Same film on two different days at the same cinema → two events."""
     today = date.today()
     tomorrow = today + timedelta(days=1)
     data = _yorck_data([_yorck_film("Rose", "rose", [
@@ -612,12 +614,13 @@ def test_yorck_groups_per_day_separately():
     events = yorck._events_in_window(data, start=today, days=14, refreshed_at=0.0)
     assert len(events) == 2
     assert {e.start_date for e in events} == {today.isoformat(), tomorrow.isoformat()}
+    assert {e.venue for e in events} == {"delphi LUX"}
 
 
-def test_yorck_multi_cinema_venue_label():
-    """A film showing at multiple cinemas on the same day collapses to
-    one event with a label that summarises all venues without dumping
-    every name into the card."""
+def test_yorck_emits_one_event_per_cinema_on_same_day():
+    """A film showing at three cinemas on the same day produces three
+    events — one per cinema — so the frontend can list cinemas per movie
+    and rank them by distance."""
     today = date.today().isoformat()
     data = _yorck_data([_yorck_film("Rose", "rose", [
         _yorck_session(f"{today}T19:00:00+02:00", "delphi LUX"),
@@ -625,8 +628,54 @@ def test_yorck_multi_cinema_venue_label():
         _yorck_session(f"{today}T21:00:00+02:00", "Rollberg"),
     ])])
     events = yorck._events_in_window(data, start=date.today(), days=14, refreshed_at=0.0)
+    assert len(events) == 3
+    venues = {e.venue for e in events}
+    assert venues == {"delphi LUX", "Kant Kino", "Rollberg"}
+    # Each event has its own ID derived from cinema slug.
+    assert len({e.id for e in events}) == 3
+
+
+def test_yorck_attaches_cinema_directory_metadata():
+    """When a cinema directory is supplied, each event carries the
+    cinema's slug-derived URL plus its lat/lon so the UI can sort by
+    distance and link out to the right program page."""
+    today = date.today().isoformat()
+    data = _yorck_data([_yorck_film("Rose", "rose", [
+        _yorck_session(f"{today}T19:00:00+02:00", "delphi LUX"),
+    ])])
+    directory = {
+        "delphi LUX": {
+            "slug": "delphi-lux",
+            "lat": 52.50557,
+            "lon": 13.32961,
+            "url": "https://www.yorck.de/kinos/delphi-lux",
+        },
+    }
+    events = yorck._events_in_window(
+        data, start=date.today(), days=14, refreshed_at=0.0,
+        cinema_directory=directory,
+    )
     assert len(events) == 1
-    assert "+2 Kinos" in events[0].venue   # delphi LUX +2 Kinos
+    e = events[0]
+    assert e.venue_url == "https://www.yorck.de/kinos/delphi-lux"
+    assert e.venue_lat == 52.50557
+    assert e.venue_lon == 13.32961
+
+
+def test_yorck_unknown_cinema_falls_back_to_slugified_url():
+    """Without a directory entry, the URL is built from a slugified name
+    so the cinema link still works (Yorck's URL scheme is /kinos/<slug>)."""
+    today = date.today().isoformat()
+    data = _yorck_data([_yorck_film("Rose", "rose", [
+        _yorck_session(f"{today}T19:00:00+02:00", "Kant Kino"),
+    ])])
+    events = yorck._events_in_window(
+        data, start=date.today(), days=14, refreshed_at=0.0,
+    )
+    assert len(events) == 1
+    assert events[0].venue_url == "https://www.yorck.de/kinos/kant-kino"
+    assert events[0].venue_lat is None
+    assert events[0].venue_lon is None
 
 
 def test_yorck_window_filtering():
