@@ -76,7 +76,7 @@ query Shows($cinemaId: ID!, $dates: [Date!]) {
         titleOriginal
         urlSlug
         duration
-        productionCountries { name iso2Code }
+        productionCountries { name }
         actors { name }
         thumbnailImage { url }
       }
