@@ -1527,14 +1527,25 @@
     return card;
   }
 
-  // Render synopsis with a 3-line clamp + "weiterlesen" toggle. Hides
-  // the toggle entirely when the text already fits without clamping.
+  // Render synopsis with a 3-line clamp + "weiterlesen" toggle.
+  // Heuristic on length rather than measured height: -webkit-line-clamp
+  // breaks scrollHeight reads in practice, so we just trust that texts
+  // past ~140 characters won't fit three lines on any plausible card
+  // width. Below that, the toggle is dropped so it doesn't show on
+  // taglines that already fit in full.
+  const SYNOPSIS_TOGGLE_MIN_CHARS = 140;
+
   function populateSynopsis(host, text) {
     const p = document.createElement('p');
-    p.className = 'movie-synopsis movie-synopsis-clamped';
+    p.className = 'movie-synopsis';
     p.textContent = text;
     host.appendChild(p);
 
+    if (text.length <= SYNOPSIS_TOGGLE_MIN_CHARS) {
+      return;
+    }
+
+    p.classList.add('movie-synopsis-clamped');
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'movie-synopsis-toggle';
@@ -1545,20 +1556,6 @@
       toggle.textContent = clamped ? 'weiterlesen' : 'weniger anzeigen';
     });
     host.appendChild(toggle);
-
-    // -webkit-line-clamp makes scrollHeight equal clientHeight in most
-    // browsers, so we can't compare them directly. Briefly drop the
-    // clamp to read the natural height, then re-apply and compare.
-    requestAnimationFrame(() => {
-      p.classList.remove('movie-synopsis-clamped');
-      const fullHeight = p.scrollHeight;
-      p.classList.add('movie-synopsis-clamped');
-      const clampedHeight = p.clientHeight;
-      if (fullHeight <= clampedHeight + 1) {
-        toggle.remove();
-        p.classList.remove('movie-synopsis-clamped');
-      }
-    });
   }
 
   // ── Trailer modal (fullscreen iframe) ────────────────
