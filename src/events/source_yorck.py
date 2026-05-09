@@ -163,6 +163,8 @@ def _normalise_film_cinema_day(
     cinema_directory: dict[str, dict],
     actors: str | None = None,
     image_url: str | None = None,
+    synopsis: str | None = None,
+    trailer_url: str | None = None,
 ) -> Event | None:
     """Build a single Event from a film's same-day, same-cinema sessions.
     Showings is a non-empty list of session dicts on the same date at the
@@ -215,6 +217,8 @@ def _normalise_film_cinema_day(
         venue_lon=venue_lon,
         image_url=image_url,
         actors=actors,
+        synopsis=synopsis,
+        trailer_url=trailer_url,
     )
 
 
@@ -242,6 +246,8 @@ def _events_in_window(
         slug = fields.get("slug") or ""
         meta = metadata.get(slug) or {}
         actors = meta.get("cast")
+        synopsis = meta.get("synopsis")
+        trailer_url = meta.get("trailer_url")
         image_url = _image_url_from_film(film)
         sessions = fields.get("sessions") or []
         # Bucket sessions by (date, cinema_name).
@@ -271,6 +277,8 @@ def _events_in_window(
                 cinema_directory=directory,
                 actors=actors,
                 image_url=image_url,
+                synopsis=synopsis,
+                trailer_url=trailer_url,
             )
             if ev is not None:
                 out.append(ev)
@@ -309,9 +317,10 @@ def _slugs_with_sessions_in_window(
 async def _fetch_film_metadata(
     client: httpx.AsyncClient, slugs: list[str],
 ) -> dict[str, dict]:
-    """Pull cast (and any other detail-page-only fields we care about)
-    for each slug. Returns slug → {'cast': str | None}; failures are
-    silently dropped so events still ship without enriched metadata."""
+    """Pull cast, synopsis and trailer ID for each slug from the per-film
+    detail page. Returns slug → {'cast': str|None, 'synopsis': str|None,
+    'trailer_url': str|None}; failures are silently dropped so events
+    still ship without enriched metadata."""
     if not slugs:
         return {}
     sem = asyncio.Semaphore(_DETAIL_CONCURRENCY)
@@ -331,12 +340,50 @@ async def _fetch_film_metadata(
                 .get("film") or {}
             ).get("fields") or {}
             cast = fields.get("cast")
+            synopsis = fields.get("synopsis") or fields.get("about")
+            yt_id = fields.get("trailer1YouTubeId") or fields.get("trailer2YouTubeId")
             return slug, {
                 "cast": cast.strip() if isinstance(cast, str) and cast.strip() else None,
+                "synopsis": _clean_yorck_synopsis(synopsis),
+                "trailer_url": (
+                    f"https://www.youtube.com/watch?v={yt_id.strip()}"
+                    if isinstance(yt_id, str) and yt_id.strip() else None
+                ),
             }
 
     results = await asyncio.gather(*(fetch_one(s) for s in slugs))
     return {s: meta for s, meta in results if meta is not None}
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _clean_yorck_synopsis(value) -> str | None:
+    """Yorck stores the synopsis as a Contentful Rich Text document
+    (nested `nodeType` blocks) on most films, but sometimes serialises
+    it to plain HTML string. Extract a single paragraph either way."""
+    if isinstance(value, str):
+        text = _HTML_TAG_RE.sub(" ", value)
+        return " ".join(text.split()).strip() or None
+    if not isinstance(value, dict):
+        return None
+    out: list[str] = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("nodeType") == "text":
+                t = node.get("value")
+                if isinstance(t, str):
+                    out.append(t)
+            for child in node.get("content") or []:
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
+
+    walk(value)
+    text = " ".join("".join(out).split()).strip()
+    return text or None
 
 
 async def _fetch_cinema_directory(

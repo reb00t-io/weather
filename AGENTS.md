@@ -100,5 +100,6 @@ When unsure:
 ## Pull Requests & Branching
 
 Default branch: `main`
+Always in this order: test, commit, deploy (fix/commit), push
 
 When a PR is explicitly requested, create a branch named `agent/<branch_name>` and open the PR with `gh`.

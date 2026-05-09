@@ -855,6 +855,41 @@ def test_kh_format_country_caps_at_three():
     assert kh._format_country([{"name": ""}]) is None
 
 
+def test_kh_normalise_pulls_synopsis_and_youtube_trailer():
+    """description and the first YouTube trailer flow through to the
+    event so the movie card can show a synopsis paragraph and a
+    trailer button without a second fetch."""
+    show = {
+        "beginning": "2026-05-09T19:00:00+02:00",
+        "movie": {
+            "id": "42", "title": "Rose",
+            "description": "  Sandra plays Rose.<br>A long story.  ",
+            "trailers": [
+                {"format": "VIMEO", "url": "https://vimeo.com/12345"},
+                {"format": "YOUTUBE", "url": "https://www.youtube.com/watch?v=abc123"},
+            ],
+        },
+    }
+    cinema = _kh_cinema()
+    ev = kh._normalise_show(show, cinema, region="Berlin", refreshed_at=0.0)
+    assert ev is not None
+    assert ev.synopsis == "Sandra plays Rose. A long story."
+    # YouTube wins over Vimeo even when listed second.
+    assert ev.trailer_url == "https://www.youtube.com/watch?v=abc123"
+
+
+def test_kh_normalise_falls_back_to_first_trailer_when_no_youtube():
+    show = {
+        "beginning": "2026-05-09T19:00:00+02:00",
+        "movie": {
+            "id": "42", "title": "Rose",
+            "trailers": [{"format": "VIMEO", "url": "https://vimeo.com/12345"}],
+        },
+    }
+    ev = kh._normalise_show(show, _kh_cinema(), region="Berlin", refreshed_at=0.0)
+    assert ev.trailer_url == "https://vimeo.com/12345"
+
+
 def test_kh_normalise_handles_missing_city_slug():
     """If the cinema is missing city.urlSlug we can't build a venue URL —
     leave it None rather than producing a broken /kino// link."""

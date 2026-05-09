@@ -76,9 +76,11 @@ query Shows($cinemaId: ID!, $dates: [Date!]) {
         titleOriginal
         urlSlug
         duration
+        description
         productionCountries { name }
         actors { name }
         thumbnailImage { url }
+        trailers { format url remoteVideoId }
       }
     }
   }
@@ -160,6 +162,35 @@ def _format_actors(actors: list[dict], *, limit: int = 5) -> str | None:
     return ", ".join(names[:limit])
 
 
+def _clean_description(text: str | None) -> str | None:
+    """Kinoheld returns the synopsis as plain text usually, but we strip
+    a few HTML artefacts that occasionally sneak through (`<br>`, double
+    whitespace) so the card paragraph reads cleanly."""
+    if not isinstance(text, str):
+        return None
+    s = text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+    s = " ".join(s.split())
+    return s.strip() or None
+
+
+def _pick_trailer_url(trailers: list[dict]) -> str | None:
+    """First YouTube trailer wins (most reliable embed), then the first
+    trailer of any format. We return the canonical watch URL — the
+    frontend extracts the YouTube ID for the inline embed."""
+    if not trailers:
+        return None
+    for t in trailers:
+        fmt = (t.get("format") or "").upper()
+        url = t.get("url")
+        if fmt == "YOUTUBE" and isinstance(url, str) and url.strip():
+            return url.strip()
+    for t in trailers:
+        url = t.get("url")
+        if isinstance(url, str) and url.strip():
+            return url.strip()
+    return None
+
+
 def _normalise_show(
     show: dict, cinema: dict, *, region: str, refreshed_at: float,
 ) -> Event | None:
@@ -221,6 +252,8 @@ def _normalise_show(
         image_url=image_url,
         actors=_format_actors(movie.get("actors") or []),
         country=_format_country(movie.get("productionCountries") or []),
+        synopsis=_clean_description(movie.get("description")),
+        trailer_url=_pick_trailer_url(movie.get("trailers") or []),
     )
 
 

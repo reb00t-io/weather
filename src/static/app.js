@@ -1338,6 +1338,8 @@
           image_url: null,
           actors: null,
           country: null,
+          synopsis: null,
+          trailer_url: null,
         };
         byTitle.set(key, g);
       }
@@ -1354,6 +1356,12 @@
       if (!g.image_url && ev.image_url) g.image_url = ev.image_url;
       if (!g.actors && ev.actors) g.actors = ev.actors;
       if (!g.country && ev.country) g.country = ev.country;
+      // Synopsis: prefer the longest one across sources (Yorck and
+      // Kinoheld can both supply it; longer usually = more useful).
+      if (ev.synopsis && (!g.synopsis || ev.synopsis.length > g.synopsis.length)) {
+        g.synopsis = ev.synopsis;
+      }
+      if (!g.trailer_url && ev.trailer_url) g.trailer_url = ev.trailer_url;
     }
 
     for (const movie of byTitle.values()) {
@@ -1466,16 +1474,39 @@
     meta.textContent = parts.join(' · ');
     body.appendChild(meta);
 
+    // Expanded section: synopsis paragraph + trailer button + cinema list.
+    // Lives inside body so the poster column stays clean.
+    const detail = document.createElement('div');
+    detail.className = 'movie-detail';
+    body.appendChild(detail);
+
     const cinemas = document.createElement('div');
     cinemas.className = 'movie-cinemas';
-    body.appendChild(cinemas);
+    detail.appendChild(cinemas);
 
     card.appendChild(body);
     card.classList.add('movie-card-collapsed');
     card.addEventListener('click', () => {
       const expanded = card.classList.toggle('movie-card-expanded');
       card.classList.toggle('movie-card-collapsed', !expanded);
-      if (expanded && !cinemas.dataset.populated) {
+      if (expanded && !detail.dataset.populated) {
+        if (movie.synopsis) {
+          const synop = document.createElement('p');
+          synop.className = 'movie-synopsis';
+          synop.textContent = movie.synopsis;
+          detail.insertBefore(synop, cinemas);
+        }
+        if (movie.trailer_url) {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'movie-trailer-btn';
+          btn.textContent = '▶ Trailer ansehen';
+          btn.addEventListener('click', e => {
+            e.stopPropagation();
+            openTrailer(movie.trailer_url, movie.title);
+          });
+          detail.insertBefore(btn, cinemas);
+        }
         const shown = movie.cinemas.slice(0, FILM_MAX_CINEMAS);
         for (const c of shown) cinemas.appendChild(createCinemaItem(c));
         const more = movie.cinemas.length - shown.length;
@@ -1485,11 +1516,75 @@
           note.textContent = '+' + more + ' weitere Kinos';
           cinemas.appendChild(note);
         }
-        cinemas.dataset.populated = '1';
+        detail.dataset.populated = '1';
       }
     });
 
     return card;
+  }
+
+  // ── Trailer modal (fullscreen iframe) ────────────────
+  const YT_RE = /(?:youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/;
+  const VIMEO_RE = /vimeo\.com\/(?:video\/)?(\d+)/;
+
+  function trailerEmbedUrl(url) {
+    const yt = url.match(YT_RE);
+    if (yt) return 'https://www.youtube.com/embed/' + yt[1] + '?autoplay=1&rel=0&modestbranding=1';
+    const v = url.match(VIMEO_RE);
+    if (v) return 'https://player.vimeo.com/video/' + v[1] + '?autoplay=1';
+    return null;
+  }
+
+  function openTrailer(url, title) {
+    const embed = trailerEmbedUrl(url);
+    if (!embed) {
+      // Unknown provider → just open the source URL; user can watch
+      // wherever it's hosted.
+      window.open(url, '_blank', 'noopener');
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'trailer-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-label', 'Trailer: ' + (title || ''));
+
+    const frame = document.createElement('iframe');
+    frame.className = 'trailer-frame';
+    frame.src = embed;
+    frame.allow = 'accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen';
+    frame.setAttribute('allowfullscreen', '');
+    overlay.appendChild(frame);
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'trailer-close';
+    close.setAttribute('aria-label', 'Trailer schließen');
+    close.textContent = '×';
+    overlay.appendChild(close);
+
+    function dismiss() {
+      if (document.fullscreenElement === overlay) {
+        document.exitFullscreen().catch(() => {});
+      }
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') dismiss();
+    }
+    close.addEventListener('click', e => { e.stopPropagation(); dismiss(); });
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) dismiss();
+    });
+    document.addEventListener('keydown', onKey);
+
+    document.body.appendChild(overlay);
+    // Try real fullscreen on platforms that support it; if it fails
+    // (iOS Safari, browsers without permission, etc.) the overlay
+    // already covers the viewport so playback still feels fullscreen.
+    if (overlay.requestFullscreen) {
+      overlay.requestFullscreen().catch(() => {});
+    }
   }
 
   function buildCinemaList(events) {

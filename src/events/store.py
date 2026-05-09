@@ -40,10 +40,13 @@ class Event:
     venue_url: str | None = None
     venue_lat: float | None = None
     venue_lon: float | None = None
-    # Editorial extras (used by the movies card: poster + cast + country).
+    # Editorial extras (used by the movies card: poster, cast, country,
+    # synopsis paragraph + trailer button).
     image_url: str | None = None
     actors: str | None = None
     country: str | None = None
+    synopsis: str | None = None
+    trailer_url: str | None = None
 
     def to_json(self) -> dict:
         return {
@@ -61,6 +64,8 @@ class Event:
             "image_url": self.image_url,
             "actors": self.actors,
             "country": self.country,
+            "synopsis": self.synopsis,
+            "trailer_url": self.trailer_url,
             "is_free": self.is_free,
             "source": self.source,
             "category": self.category,
@@ -113,7 +118,9 @@ class EventStore:
                         venue_lon       REAL,
                         image_url       TEXT,
                         actors          TEXT,
-                        country         TEXT
+                        country         TEXT,
+                        synopsis        TEXT,
+                        trailer_url     TEXT
                     )
                 """)
                 conn.execute(
@@ -133,6 +140,8 @@ class EventStore:
                     ("image_url",      "ALTER TABLE events ADD COLUMN image_url TEXT"),
                     ("actors",         "ALTER TABLE events ADD COLUMN actors TEXT"),
                     ("country",        "ALTER TABLE events ADD COLUMN country TEXT"),
+                    ("synopsis",       "ALTER TABLE events ADD COLUMN synopsis TEXT"),
+                    ("trailer_url",    "ALTER TABLE events ADD COLUMN trailer_url TEXT"),
                 ):
                     if col not in existing:
                         conn.execute(ddl)
@@ -170,8 +179,9 @@ class EventStore:
                     "(id, region, start_date, end_date, start_time, end_time, "
                     " title, venue, is_free, source, refreshed_at, "
                     " category, interest_score, is_civic, enriched_at, "
-                    " venue_url, venue_lat, venue_lon, image_url, actors, country) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " venue_url, venue_lat, venue_lon, image_url, actors, country, "
+                    " synopsis, trailer_url) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 conn.commit()
@@ -203,6 +213,7 @@ class EventStore:
             category, score, civic, enriched,
             e.venue_url, e.venue_lat, e.venue_lon,
             e.image_url, e.actors, e.country,
+            e.synopsis, e.trailer_url,
         )
 
     def update_classification(
@@ -316,8 +327,9 @@ class EventStore:
                         "(id, region, start_date, end_date, start_time, end_time, "
                         " title, venue, is_free, source, refreshed_at, "
                         " category, interest_score, is_civic, enriched_at, "
-                        " venue_url, venue_lat, venue_lon, image_url, actors, country) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        " venue_url, venue_lat, venue_lon, image_url, actors, country, "
+                        " synopsis, trailer_url) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         rows,
                     )
                 conn.commit()
@@ -352,6 +364,8 @@ def _row_to_event(r) -> Event:
         image_url=r["image_url"] if "image_url" in keys else None,
         actors=r["actors"] if "actors" in keys else None,
         country=r["country"] if "country" in keys else None,
+        synopsis=r["synopsis"] if "synopsis" in keys else None,
+        trailer_url=r["trailer_url"] if "trailer_url" in keys else None,
     )
 
 
