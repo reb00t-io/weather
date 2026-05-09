@@ -1302,7 +1302,9 @@
   // List unique movies (deduped by title across showtimes and cinemas),
   // respect the day filter, and let the user drill into the cinemas
   // playing that movie — sorted by travel distance from the current
-  // location.
+  // location. Movies are ranked by cinema count (busier ≈ bigger draw),
+  // breaking ties by closest cinema distance so locals see their nearest
+  // option first.
   function renderMovies() {
     const filtered = eventsState.all.filter(e =>
       e.category === 'film' && matchesTime(e, eventsState.time)
@@ -1314,23 +1316,47 @@
       if (!key) continue;
       let g = byTitle.get(key);
       if (!g) {
-        g = { title: ev.title, events: [], maxScore: -1, soonest: ev.start_date };
+        g = {
+          title: ev.title,
+          events: [],
+          venues: new Set(),
+          days: new Set(),
+          maxScore: -1,
+          image_url: null,
+          actors: null,
+        };
         byTitle.set(key, g);
       }
       g.events.push(ev);
+      if (ev.venue) g.venues.add(ev.venue);
+      if (ev.start_date) g.days.add(ev.start_date);
       const score = ev.interest_score == null ? 0 : ev.interest_score;
       if (score > g.maxScore) {
         g.maxScore = score;
         g.title = ev.title;
       }
-      if (ev.start_date < g.soonest) g.soonest = ev.start_date;
+      if (!g.image_url && ev.image_url) g.image_url = ev.image_url;
+      if (!g.actors && ev.actors) g.actors = ev.actors;
     }
 
-    const movies = [...byTitle.values()].sort((a, b) =>
-      (b.maxScore - a.maxScore) ||
-      a.soonest.localeCompare(b.soonest) ||
-      a.title.localeCompare(b.title, 'de')
-    );
+    // Pre-compute the cinema list (with distances) once so sorting and
+    // the click handler share the same ranking.
+    for (const movie of byTitle.values()) {
+      movie.cinemas = buildCinemaList(movie.events);
+      movie.minDistance = movie.cinemas.reduce((min, c) => {
+        if (c.distance_km == null) return min;
+        return min == null ? c.distance_km : Math.min(min, c.distance_km);
+      }, null);
+    }
+
+    const movies = [...byTitle.values()].sort((a, b) => {
+      const venueDiff = b.venues.size - a.venues.size;
+      if (venueDiff !== 0) return venueDiff;
+      const ad = a.minDistance == null ? Infinity : a.minDistance;
+      const bd = b.minDistance == null ? Infinity : b.minDistance;
+      if (ad !== bd) return ad - bd;
+      return a.title.localeCompare(b.title, 'de');
+    });
 
     const visible = movies.slice(0, eventsState.shown);
 
@@ -1358,6 +1384,19 @@
     const card = document.createElement('div');
     card.className = 'event-card movie-card';
 
+    if (movie.image_url) {
+      const poster = document.createElement('img');
+      poster.className = 'movie-poster';
+      poster.src = movie.image_url;
+      poster.alt = movie.title;
+      poster.loading = 'lazy';
+      poster.decoding = 'async';
+      // Hide the slot if the image fails (404, decode error, etc.) so we
+      // don't leave a grey hole in the card.
+      poster.addEventListener('error', () => poster.remove());
+      card.appendChild(poster);
+    }
+
     const body = document.createElement('div');
     body.className = 'event-body movie-body';
 
@@ -1370,13 +1409,22 @@
     title.appendChild(document.createTextNode(movie.title));
     body.appendChild(title);
 
+    if (movie.actors) {
+      const cast = document.createElement('div');
+      cast.className = 'movie-cast';
+      cast.textContent = movie.actors;
+      body.appendChild(cast);
+    }
+
     const meta = document.createElement('div');
     meta.className = 'event-meta';
-    const venues = new Set(movie.events.map(e => e.venue).filter(Boolean));
-    const days = new Set(movie.events.map(e => e.start_date));
-    const cinemaWord = venues.size === 1 ? 'Kino' : 'Kinos';
-    const dayWord = days.size === 1 ? 'Tag' : 'Tage';
-    meta.textContent = venues.size + ' ' + cinemaWord + ' · ' + days.size + ' ' + dayWord;
+    const cinemaWord = movie.venues.size === 1 ? 'Kino' : 'Kinos';
+    const dayWord = movie.days.size === 1 ? 'Tag' : 'Tage';
+    let metaText = movie.venues.size + ' ' + cinemaWord + ' · ' + movie.days.size + ' ' + dayWord;
+    if (movie.minDistance != null) {
+      metaText += ' · ab ' + formatKm(movie.minDistance);
+    }
+    meta.textContent = metaText;
     body.appendChild(meta);
 
     const cinemas = document.createElement('div');
@@ -1389,8 +1437,7 @@
       const expanded = card.classList.toggle('movie-card-expanded');
       card.classList.toggle('movie-card-collapsed', !expanded);
       if (expanded && !cinemas.dataset.populated) {
-        const list = buildCinemaList(movie.events);
-        for (const c of list) cinemas.appendChild(createCinemaItem(c));
+        for (const c of movie.cinemas) cinemas.appendChild(createCinemaItem(c));
         cinemas.dataset.populated = '1';
       }
     });

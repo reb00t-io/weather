@@ -40,6 +40,9 @@ class Event:
     venue_url: str | None = None
     venue_lat: float | None = None
     venue_lon: float | None = None
+    # Editorial extras (used by the movies card: poster + cast line).
+    image_url: str | None = None
+    actors: str | None = None
 
     def to_json(self) -> dict:
         return {
@@ -54,6 +57,8 @@ class Event:
             "venue_url": self.venue_url,
             "venue_lat": self.venue_lat,
             "venue_lon": self.venue_lon,
+            "image_url": self.image_url,
+            "actors": self.actors,
             "is_free": self.is_free,
             "source": self.source,
             "category": self.category,
@@ -103,7 +108,9 @@ class EventStore:
                         enriched_at     REAL,
                         venue_url       TEXT,
                         venue_lat       REAL,
-                        venue_lon       REAL
+                        venue_lon       REAL,
+                        image_url       TEXT,
+                        actors          TEXT
                     )
                 """)
                 conn.execute(
@@ -120,6 +127,8 @@ class EventStore:
                     ("venue_url",      "ALTER TABLE events ADD COLUMN venue_url TEXT"),
                     ("venue_lat",      "ALTER TABLE events ADD COLUMN venue_lat REAL"),
                     ("venue_lon",      "ALTER TABLE events ADD COLUMN venue_lon REAL"),
+                    ("image_url",      "ALTER TABLE events ADD COLUMN image_url TEXT"),
+                    ("actors",         "ALTER TABLE events ADD COLUMN actors TEXT"),
                 ):
                     if col not in existing:
                         conn.execute(ddl)
@@ -157,8 +166,8 @@ class EventStore:
                     "(id, region, start_date, end_date, start_time, end_time, "
                     " title, venue, is_free, source, refreshed_at, "
                     " category, interest_score, is_civic, enriched_at, "
-                    " venue_url, venue_lat, venue_lon) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " venue_url, venue_lat, venue_lon, image_url, actors) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rows,
                 )
                 conn.commit()
@@ -189,6 +198,7 @@ class EventStore:
             1 if e.is_free else 0, e.source, e.refreshed_at,
             category, score, civic, enriched,
             e.venue_url, e.venue_lat, e.venue_lon,
+            e.image_url, e.actors,
         )
 
     def update_classification(
@@ -302,8 +312,8 @@ class EventStore:
                         "(id, region, start_date, end_date, start_time, end_time, "
                         " title, venue, is_free, source, refreshed_at, "
                         " category, interest_score, is_civic, enriched_at, "
-                        " venue_url, venue_lat, venue_lon) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        " venue_url, venue_lat, venue_lon, image_url, actors) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         rows,
                     )
                 conn.commit()
@@ -335,6 +345,8 @@ def _row_to_event(r) -> Event:
         venue_url=r["venue_url"] if "venue_url" in keys else None,
         venue_lat=r["venue_lat"] if "venue_lat" in keys else None,
         venue_lon=r["venue_lon"] if "venue_lon" in keys else None,
+        image_url=r["image_url"] if "image_url" in keys else None,
+        actors=r["actors"] if "actors" in keys else None,
     )
 
 

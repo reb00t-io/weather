@@ -15,6 +15,7 @@ No API key, no rate limit signalled. Two GETs per refresh.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -29,8 +30,18 @@ logger = logging.getLogger(__name__)
 YORCK_FILMS_URL = "https://www.yorck.de/films"
 YORCK_CINEMAS_URL = "https://www.yorck.de/kinos"
 YORCK_CINEMA_PAGE = "https://www.yorck.de/kinos/{slug}"
+YORCK_FILM_PAGE = "https://www.yorck.de/filme/{slug}"
 SOURCE_ID = "yorck"
 REGION = "Berlin"
+
+# Cap for parallel detail-page fetches. Yorck's site is happy with bursts
+# of a handful of requests; this keeps the refresh pass under ~15s.
+_DETAIL_CONCURRENCY = 8
+
+# Contentful image transform: thumbnail-sized webp tuned for the movie
+# card. Card is ~96px wide on mobile; 2× = 192px, but 480px gives some
+# headroom for high-DPI screens without being wasteful.
+_IMAGE_TRANSFORM = "w=480&fm=webp&q=80"
 
 # Anchor of the embedded JSON blob.
 _NEXT_DATA_RE = re.compile(
@@ -125,6 +136,23 @@ def _cinemas_from_directory(data: dict) -> dict[str, dict]:
     return out
 
 
+def _image_url_from_film(film: dict) -> str | None:
+    """Pull the listing-page poster URL (heroImage) and append a Contentful
+    image-API transform so we serve a thumbnail-sized webp instead of the
+    raw 4K source."""
+    fields = film.get("fields") or {}
+    hero = fields.get("heroImage") or {}
+    img = ((hero.get("fields") or {}).get("image") or {}).get("fields") or {}
+    file = img.get("file") or {}
+    url = file.get("url")
+    if not isinstance(url, str) or not url:
+        return None
+    if url.startswith("//"):
+        url = "https:" + url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}{_IMAGE_TRANSFORM}"
+
+
 def _normalise_film_cinema_day(
     film: dict,
     cinema_name: str,
@@ -133,6 +161,8 @@ def _normalise_film_cinema_day(
     refreshed_at: float,
     promoted_slugs: set[str],
     cinema_directory: dict[str, dict],
+    actors: str | None = None,
+    image_url: str | None = None,
 ) -> Event | None:
     """Build a single Event from a film's same-day, same-cinema sessions.
     Showings is a non-empty list of session dicts on the same date at the
@@ -183,6 +213,8 @@ def _normalise_film_cinema_day(
         venue_url=venue_url,
         venue_lat=venue_lat,
         venue_lon=venue_lon,
+        image_url=image_url,
+        actors=actors,
     )
 
 
@@ -193,17 +225,25 @@ def _events_in_window(
     days: int,
     refreshed_at: float,
     cinema_directory: dict[str, dict] | None = None,
+    film_metadata: dict[str, dict] | None = None,
 ) -> list[Event]:
     """Walk the parsed __NEXT_DATA__ blob, group sessions by (film, cinema,
     day), restrict to [start, start+days), and emit one Event per group.
-    Each event carries the cinema's slug/url/coords so the UI can rank
-    cinemas by distance for a given film."""
+    Each event carries the cinema's slug/url/coords plus the film's
+    poster/cast so the UI can rank cinemas by distance and render a card
+    that's useful before tapping."""
     end = start + timedelta(days=days)
     promoted = _promoted_film_ids(data)
     directory = cinema_directory or {}
+    metadata = film_metadata or {}
     out: list[Event] = []
     for film in _films_from(data):
-        sessions = (film.get("fields") or {}).get("sessions") or []
+        fields = film.get("fields") or {}
+        slug = fields.get("slug") or ""
+        meta = metadata.get(slug) or {}
+        actors = meta.get("cast")
+        image_url = _image_url_from_film(film)
+        sessions = fields.get("sessions") or []
         # Bucket sessions by (date, cinema_name).
         by_day_cinema: dict[tuple[str, str], list[dict]] = {}
         for s in sessions:
@@ -229,10 +269,74 @@ def _events_in_window(
                 refreshed_at=refreshed_at,
                 promoted_slugs=promoted,
                 cinema_directory=directory,
+                actors=actors,
+                image_url=image_url,
             )
             if ev is not None:
                 out.append(ev)
     return out
+
+
+def _slugs_with_sessions_in_window(
+    data: dict, *, start: date, end: date,
+) -> list[str]:
+    """Return the unique film slugs that have at least one session within
+    [start, end). Used to bound the per-film detail fetch to films that
+    will actually appear in the window."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for film in _films_from(data):
+        fields = film.get("fields") or {}
+        slug = fields.get("slug")
+        if not slug or slug in seen:
+            continue
+        sessions = fields.get("sessions") or []
+        for s in sessions:
+            dt = _session_date_time(s)
+            if dt is None:
+                continue
+            try:
+                d_obj = datetime.strptime(dt[0], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if start <= d_obj < end:
+                out.append(slug)
+                seen.add(slug)
+                break
+    return out
+
+
+async def _fetch_film_metadata(
+    client: httpx.AsyncClient, slugs: list[str],
+) -> dict[str, dict]:
+    """Pull cast (and any other detail-page-only fields we care about)
+    for each slug. Returns slug → {'cast': str | None}; failures are
+    silently dropped so events still ship without enriched metadata."""
+    if not slugs:
+        return {}
+    sem = asyncio.Semaphore(_DETAIL_CONCURRENCY)
+
+    async def fetch_one(slug: str) -> tuple[str, dict | None]:
+        async with sem:
+            try:
+                r = await client.get(YORCK_FILM_PAGE.format(slug=slug))
+                r.raise_for_status()
+            except httpx.HTTPError:
+                return slug, None
+            data = _parse_next_data(r.text)
+            if data is None:
+                return slug, None
+            fields = (
+                ((data.get("props") or {}).get("pageProps") or {})
+                .get("film") or {}
+            ).get("fields") or {}
+            cast = fields.get("cast")
+            return slug, {
+                "cast": cast.strip() if isinstance(cast, str) and cast.strip() else None,
+            }
+
+    results = await asyncio.gather(*(fetch_one(s) for s in slugs))
+    return {s: meta for s, meta in results if meta is not None}
 
 
 async def _fetch_cinema_directory(
@@ -281,16 +385,23 @@ async def fetch_events(
         if data is None:
             logger.warning("events.yorck.fetch: no __NEXT_DATA__ in response")
             return []
+        slugs = _slugs_with_sessions_in_window(
+            data, start=start, end=start + timedelta(days=days),
+        )
+        film_metadata = await _fetch_film_metadata(client, slugs)
         events = _events_in_window(
             data,
             start=start,
             days=days,
             refreshed_at=now_ts(),
             cinema_directory=cinema_directory,
+            film_metadata=film_metadata,
         )
         logger.info(
-            "events.yorck.fetch: %d film-cinema-day events (%d cinemas)",
+            "events.yorck.fetch: %d film-cinema-day events "
+            "(%d cinemas, %d films enriched / %d slugs)",
             len(events), len(cinema_directory),
+            len(film_metadata), len(slugs),
         )
         return events
     except httpx.HTTPError:

@@ -662,6 +662,42 @@ def test_yorck_attaches_cinema_directory_metadata():
     assert e.venue_lon == 13.32961
 
 
+def test_yorck_propagates_image_and_actors():
+    """Hero image from the listings payload + cast from the detail-page
+    metadata flow through to every (film, cinema, day) event so the
+    movie card has a poster and an actors line without extra requests."""
+    today = date.today().isoformat()
+    film = _yorck_film("Rose", "rose", [
+        _yorck_session(f"{today}T19:00:00+02:00", "delphi LUX"),
+        _yorck_session(f"{today}T20:00:00+02:00", "Kant Kino"),
+    ])
+    film["fields"]["heroImage"] = {"fields": {"image": {"fields": {
+        "file": {"url": "//images.ctfassets.net/x/y/z/Rose"},
+    }}}}
+    data = _yorck_data([film])
+    events = yorck._events_in_window(
+        data, start=date.today(), days=14, refreshed_at=0.0,
+        film_metadata={"rose": {"cast": "Sandra Hüller, Caro Braun"}},
+    )
+    assert len(events) == 2
+    for e in events:
+        assert e.image_url == "https://images.ctfassets.net/x/y/z/Rose?w=480&fm=webp&q=80"
+        assert e.actors == "Sandra Hüller, Caro Braun"
+
+
+def test_yorck_no_metadata_leaves_actors_none():
+    today = date.today().isoformat()
+    data = _yorck_data([_yorck_film("Rose", "rose", [
+        _yorck_session(f"{today}T19:00:00+02:00", "delphi LUX"),
+    ])])
+    events = yorck._events_in_window(
+        data, start=date.today(), days=14, refreshed_at=0.0,
+    )
+    assert events[0].actors is None
+    # No heroImage in the test fixture either.
+    assert events[0].image_url is None
+
+
 def test_yorck_unknown_cinema_falls_back_to_slugified_url():
     """Without a directory entry, the URL is built from a slugified name
     so the cinema link still works (Yorck's URL scheme is /kinos/<slug>)."""
