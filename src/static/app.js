@@ -1546,10 +1546,15 @@
     });
     host.appendChild(toggle);
 
-    // requestAnimationFrame so layout has happened before we decide
-    // whether to keep the toggle.
+    // -webkit-line-clamp makes scrollHeight equal clientHeight in most
+    // browsers, so we can't compare them directly. Briefly drop the
+    // clamp to read the natural height, then re-apply and compare.
     requestAnimationFrame(() => {
-      if (p.scrollHeight <= p.clientHeight + 1) {
+      p.classList.remove('movie-synopsis-clamped');
+      const fullHeight = p.scrollHeight;
+      p.classList.add('movie-synopsis-clamped');
+      const clampedHeight = p.clientHeight;
+      if (fullHeight <= clampedHeight + 1) {
         toggle.remove();
         p.classList.remove('movie-synopsis-clamped');
       }
