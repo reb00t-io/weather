@@ -1,0 +1,26 @@
+# Per-repo ship configuration. Optional — every key has a sensible
+# default, so the file can be empty (or absent) and ship still works.
+#
+# This file is consumed by the ship daemon when it picks up a tick
+# for this repo. The central registry (in the daemon's state dir)
+# only knows the repo URL, the workspace path, and the polling cadence;
+# everything below is something the watched repo's owner should
+# control themselves.
+
+# Branch ship promotes successful deploys to.
+release_branch: release
+
+# Test and deploy commands, relative to the repo root.
+test: ./.ship/test.sh
+deploy: ./.ship/deploy.sh
+
+policy:
+  # Auto-fix attempts when tests fail. (Currently advisory — Claude
+  # drives the workflow itself per claude-workflow.md.)
+  max_fix_attempts: 3
+  # Hard cap on Claude turns per workflow invocation.
+  claude_max_turns: 30
+
+# Push commits and the release branch to origin. Set false for a
+# pre-release sandbox where you don't want anything reaching GitHub.
+push: true
