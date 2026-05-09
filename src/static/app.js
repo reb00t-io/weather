@@ -1299,16 +1299,26 @@
   }
 
   // ── Movies view (cat === 'film') ──────────────────────
-  // List unique movies (deduped by title across showtimes and cinemas),
-  // respect the day filter, and let the user drill into the cinemas
-  // playing that movie — sorted by travel distance from the current
-  // location. Movies are ranked by cinema count (busier ≈ bigger draw),
-  // breaking ties by closest cinema distance so locals see their nearest
-  // option first.
-  function renderMovies() {
-    const filtered = eventsState.all.filter(e =>
-      e.category === 'film' && matchesTime(e, eventsState.time)
-    );
+  // Show unique movies (deduped by title across showtimes and cinemas)
+  // playing within travel distance of the user. We try a tight 15 km
+  // radius first; if that turns up nothing, expand to 30 km. The day
+  // filter still applies. Tapping a movie reveals its cinemas, sorted
+  // by distance — tapping a cinema opens its program page.
+  const FILM_RADIUS_PRIMARY_KM = 15;
+  const FILM_RADIUS_FALLBACK_KM = 30;
+
+  function buildMovieGroups(radiusKm) {
+    const city = eventsState.city;
+    const hasCoords = city && city.lat != null && city.lon != null;
+
+    const filtered = eventsState.all.filter(ev => {
+      if (ev.category !== 'film') return false;
+      if (!matchesTime(ev, eventsState.time)) return false;
+      if (!hasCoords) return true;
+      if (ev.venue_lat == null || ev.venue_lon == null) return true;
+      const d = haversineKm(city.lat, city.lon, ev.venue_lat, ev.venue_lon);
+      return d <= radiusKm;
+    });
 
     const byTitle = new Map();
     for (const ev of filtered) {
@@ -1324,11 +1334,14 @@
           maxScore: -1,
           image_url: null,
           actors: null,
+          country: null,
         };
         byTitle.set(key, g);
       }
       g.events.push(ev);
-      if (ev.venue) g.venues.add(ev.venue);
+      // Dedup venues case-insensitively so 'delphi LUX' (Yorck) and
+      // 'Delphi LUX' (Kinoheld) don't double-count.
+      if (ev.venue) g.venues.add(ev.venue.toLowerCase());
       if (ev.start_date) g.days.add(ev.start_date);
       const score = ev.interest_score == null ? 0 : ev.interest_score;
       if (score > g.maxScore) {
@@ -1337,10 +1350,9 @@
       }
       if (!g.image_url && ev.image_url) g.image_url = ev.image_url;
       if (!g.actors && ev.actors) g.actors = ev.actors;
+      if (!g.country && ev.country) g.country = ev.country;
     }
 
-    // Pre-compute the cinema list (with distances) once so sorting and
-    // the click handler share the same ranking.
     for (const movie of byTitle.values()) {
       movie.cinemas = buildCinemaList(movie.events);
       movie.minDistance = movie.cinemas.reduce((min, c) => {
@@ -1349,7 +1361,7 @@
       }, null);
     }
 
-    const movies = [...byTitle.values()].sort((a, b) => {
+    return [...byTitle.values()].sort((a, b) => {
       const venueDiff = b.venues.size - a.venues.size;
       if (venueDiff !== 0) return venueDiff;
       const ad = a.minDistance == null ? Infinity : a.minDistance;
@@ -1357,10 +1369,31 @@
       if (ad !== bd) return ad - bd;
       return a.title.localeCompare(b.title, 'de');
     });
+  }
+
+  function renderMovies() {
+    let radius = FILM_RADIUS_PRIMARY_KM;
+    let movies = buildMovieGroups(radius);
+    let expanded = false;
+    if (!movies.length) {
+      radius = FILM_RADIUS_FALLBACK_KM;
+      movies = buildMovieGroups(radius);
+      expanded = movies.length > 0;
+    }
 
     const visible = movies.slice(0, eventsState.shown);
 
     eventsList.innerHTML = '';
+
+    if (movies.length) {
+      const banner = document.createElement('div');
+      banner.className = 'movie-radius-banner';
+      banner.textContent = expanded
+        ? `Keine Kinos in ${FILM_RADIUS_PRIMARY_KM} km – Radius auf ${radius} km erweitert.`
+        : `Filme in ${radius} km Umkreis`;
+      eventsList.appendChild(banner);
+    }
+
     eventsEmpty.style.display = movies.length ? 'none' : 'block';
     if (!movies.length) {
       eventsMoreBtn.style.display = 'none';
@@ -1418,13 +1451,16 @@
 
     const meta = document.createElement('div');
     meta.className = 'event-meta';
+    const parts = [];
+    if (movie.country) parts.push(movie.country);
     const cinemaWord = movie.venues.size === 1 ? 'Kino' : 'Kinos';
+    parts.push(movie.venues.size + ' ' + cinemaWord);
     const dayWord = movie.days.size === 1 ? 'Tag' : 'Tage';
-    let metaText = movie.venues.size + ' ' + cinemaWord + ' · ' + movie.days.size + ' ' + dayWord;
+    parts.push(movie.days.size + ' ' + dayWord);
     if (movie.minDistance != null) {
-      metaText += ' · ab ' + formatKm(movie.minDistance);
+      parts.push('ab ' + formatKm(movie.minDistance));
     }
-    meta.textContent = metaText;
+    meta.textContent = parts.join(' · ');
     body.appendChild(meta);
 
     const cinemas = document.createElement('div');
@@ -1446,11 +1482,14 @@
   }
 
   function buildCinemaList(events) {
+    // Case-insensitive dedup so the same cinema reported by Yorck and
+    // Kinoheld with different capitalisation collapses to one row.
     const byVenue = new Map();
     for (const ev of events) {
       const v = ev.venue || '';
       if (!v) continue;
-      let k = byVenue.get(v);
+      const key = v.toLowerCase();
+      let k = byVenue.get(key);
       if (!k) {
         k = {
           venue: v,
@@ -1459,10 +1498,9 @@
           venue_lon: ev.venue_lon,
           dates: new Set(),
         };
-        byVenue.set(v, k);
+        byVenue.set(key, k);
       }
       if (ev.start_date) k.dates.add(ev.start_date);
-      // Some events may carry coords/url even if the first one didn't.
       if (k.venue_url == null && ev.venue_url) k.venue_url = ev.venue_url;
       if (k.venue_lat == null && ev.venue_lat != null) k.venue_lat = ev.venue_lat;
       if (k.venue_lon == null && ev.venue_lon != null) k.venue_lon = ev.venue_lon;

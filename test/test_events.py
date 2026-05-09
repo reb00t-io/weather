@@ -746,3 +746,113 @@ def test_yorck_skips_film_without_sessions():
 
 def test_yorck_parse_next_data_handles_missing_blob():
     assert yorck._parse_next_data("<html><body>no script here</body></html>") is None
+
+
+# ── Kinoheld GraphQL source ───────────────────────────────────────────────
+
+from src.events import source_kinoheld as kh  # noqa: E402
+
+
+def _kh_show(beginning, *, movie_id="m1", title="Demo", country=None,
+             actors=None, image=None):
+    show = {"beginning": beginning, "movie": {
+        "id": movie_id, "title": title,
+        "productionCountries": [{"name": country}] if country else [],
+        "actors": [{"name": a} for a in (actors or [])],
+        "thumbnailImage": {"url": image} if image else None,
+    }}
+    return show
+
+
+def _kh_cinema(id_="c1", name="Demo Cinema", slug="demo-cinema",
+               city_slug="berlin", lat=52.5, lon=13.4):
+    return {
+        "id": id_, "name": name, "urlSlug": slug,
+        "latitude": lat, "longitude": lon,
+        "city": {"name": "Berlin", "urlSlug": city_slug},
+    }
+
+
+def test_kh_normalise_show_emits_full_event():
+    """A complete show payload with country/actors/image yields one event
+    populated end-to-end. Goal: anything Kinoheld gives us survives the
+    mapping intact, including the cinema URL we synthesize."""
+    show = _kh_show(
+        "2026-05-09T19:30:00+02:00",
+        movie_id="42", title="Rose", country="Deutschland",
+        actors=["Sandra Hüller", "Caro Braun"],
+        image="https://static.kinoheld.de/images/film/rose.jpg",
+    )
+    cinema = _kh_cinema(id_="100", name="Delphi LUX", slug="delphi-lux")
+    ev = kh._normalise_show(show, cinema, region="Berlin", refreshed_at=0.0)
+    assert ev is not None
+    assert ev.id == "kh_42_100_2026-05-09"
+    assert ev.title == "Rose"
+    assert ev.venue == "Delphi LUX"
+    assert ev.region == "Berlin"
+    assert ev.start_date == "2026-05-09"
+    assert ev.start_time == "19:30:00"
+    assert ev.country == "Deutschland"
+    assert ev.actors == "Sandra Hüller, Caro Braun"
+    assert ev.image_url == "https://static.kinoheld.de/images/film/rose.jpg"
+    assert ev.venue_url == "https://www.kinoheld.de/kino/berlin/delphi-lux"
+    assert ev.venue_lat == 52.5
+    assert ev.venue_lon == 13.4
+    assert ev.category == "film"
+    assert ev.source == "kinoheld"
+
+
+def test_kh_normalise_show_drops_when_required_fields_missing():
+    """A show with no movie title, no movie id, or no beginning is
+    unusable — caller should drop it rather than emit a half-built row."""
+    cinema = _kh_cinema()
+    no_title = _kh_show("2026-05-09T19:30:00+02:00", title="")
+    no_id = _kh_show("2026-05-09T19:30:00+02:00", movie_id="")
+    no_time = _kh_show("", title="Real Title")
+    for show in (no_title, no_id, no_time):
+        assert kh._normalise_show(show, cinema, region="Berlin", refreshed_at=0.0) is None
+
+
+def test_kh_collapse_keeps_earliest_showtime():
+    """Two showtimes of the same movie at the same cinema on the same
+    day must collapse to ONE event keeping the earliest start_time, so
+    the card represents a film-day, not individual showings."""
+    cinema = _kh_cinema(id_="100")
+    showings = [
+        _kh_show("2026-05-09T21:00:00+02:00", movie_id="42"),
+        _kh_show("2026-05-09T17:30:00+02:00", movie_id="42"),
+        _kh_show("2026-05-09T19:30:00+02:00", movie_id="42"),
+    ]
+    events = [
+        kh._normalise_show(s, cinema, region="Berlin", refreshed_at=0.0)
+        for s in showings
+    ]
+    collapsed = kh._collapse_per_movie_cinema_day(events)
+    assert len(collapsed) == 1
+    assert collapsed[0].start_time == "17:30:00"
+
+
+def test_kh_format_country_caps_at_three():
+    """German co-productions list a long tail of countries — show at
+    most three so the meta line on the card stays readable."""
+    countries = [
+        {"name": "Deutschland"}, {"name": "Frankreich"},
+        {"name": "USA"}, {"name": "Libanon"}, {"name": "Katar"},
+    ]
+    assert kh._format_country(countries) == "Deutschland, Frankreich, USA"
+    assert kh._format_country([]) is None
+    assert kh._format_country([{"name": ""}]) is None
+
+
+def test_kh_normalise_handles_missing_city_slug():
+    """If the cinema is missing city.urlSlug we can't build a venue URL —
+    leave it None rather than producing a broken /kino// link."""
+    show = _kh_show("2026-05-09T19:00:00+02:00")
+    cinema = {
+        "id": "100", "name": "Demo", "urlSlug": "demo",
+        "latitude": 52.5, "longitude": 13.4,
+        "city": {"name": "Berlin"},  # no urlSlug
+    }
+    ev = kh._normalise_show(show, cinema, region="Berlin", refreshed_at=0.0)
+    assert ev is not None
+    assert ev.venue_url is None
