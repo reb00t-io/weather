@@ -1306,6 +1306,9 @@
   // by distance — tapping a cinema opens its program page.
   const FILM_RADIUS_PRIMARY_KM = 15;
   const FILM_RADIUS_FALLBACK_KM = 30;
+  // When a movie has more than this many cinemas, show only the closest
+  // ones — the rest is noise once the user has reasonable nearby options.
+  const FILM_MAX_CINEMAS = 20;
 
   function buildMovieGroups(radiusKm) {
     const city = eventsState.city;
@@ -1473,7 +1476,15 @@
       const expanded = card.classList.toggle('movie-card-expanded');
       card.classList.toggle('movie-card-collapsed', !expanded);
       if (expanded && !cinemas.dataset.populated) {
-        for (const c of movie.cinemas) cinemas.appendChild(createCinemaItem(c));
+        const shown = movie.cinemas.slice(0, FILM_MAX_CINEMAS);
+        for (const c of shown) cinemas.appendChild(createCinemaItem(c));
+        const more = movie.cinemas.length - shown.length;
+        if (more > 0) {
+          const note = document.createElement('div');
+          note.className = 'cinema-overflow';
+          note.textContent = '+' + more + ' weitere Kinos';
+          cinemas.appendChild(note);
+        }
         cinemas.dataset.populated = '1';
       }
     });
@@ -1627,17 +1638,18 @@
     return card;
   }
 
-  function updateEventsTitle(city) {
-    if (!city) return;
-    const region = city.name.split(',')[0].split(/[-–]/)[0].trim();
-    eventsTitle.textContent = 'Events in ' + region;
+  function setEventsTitle(label) {
+    eventsTitle.textContent = 'Events in ' + label;
   }
 
   async function fetchEvents(city) {
     if (!city) return;
     eventsState.city = city;
     eventsState.shown = EVENTS_PAGE;
-    updateEventsTitle(city);
+    // Optimistic title from the city name; the API response will replace
+    // it with the resolved region (e.g. 'Hansestadt Salzwedel' →
+    // 'Salzwedel') once it lands.
+    setEventsTitle(city.name.split(',')[0].split(/[-–]/)[0].trim());
     eventsLoading.classList.add('visible');
     eventsList.innerHTML = '';
     eventsMoreBtn.style.display = 'none';
@@ -1646,6 +1658,7 @@
                             { headers: AUTH_HEADERS });
       const data = await r.json();
       eventsState.all = data.events || [];
+      if (data.region) setEventsTitle(data.region);
       // Tab visible only when this region actually has events.
       eventsBtn.style.display = eventsState.all.length ? '' : 'none';
       // If the user was on the events tab but the new city has none, fall back.

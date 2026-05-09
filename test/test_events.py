@@ -183,6 +183,17 @@ def test_resolve_region_strips_district_and_country():
     assert _resolve_region("München") == "München"
 
 
+def test_resolve_region_strips_german_place_name_prefixes():
+    """Open-Meteo's geocoder labels Salzwedel as 'Hansestadt Salzwedel'
+    and Munich as 'Landeshauptstadt München' — both must reduce to the
+    bare city name the sources tag events with, otherwise the events
+    tab silently shows nothing for those locations."""
+    assert _resolve_region("Hansestadt Salzwedel") == "Salzwedel"
+    assert _resolve_region("Hansestadt Salzwedel, Sachsen-Anhalt") == "Salzwedel"
+    assert _resolve_region("Landeshauptstadt München") == "München"
+    assert _resolve_region("Stadt Köln") == "Köln"
+
+
 # ── API endpoint ────────────────────────────────────────────────────────────
 
 @pytest.fixture()

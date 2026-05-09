@@ -19,10 +19,28 @@ DEFAULT_DAYS = service.DEFAULT_DAYS
 MAX_DAYS = 30
 
 
+_REGION_PREFIXES = (
+    "Hansestadt ",
+    "Landeshauptstadt ",
+    "Kreisstadt ",
+    "Universitätsstadt ",
+    "Stadt ",
+)
+
+
 def _resolve_region(name: str) -> str:
     """Reduce a place name to its broader region key — same logic as
-    weather_api._resolve_city so 'Berlin-Marzahn, Berlin' → 'Berlin'."""
+    weather_api._resolve_city so 'Berlin-Marzahn, Berlin' → 'Berlin'.
+
+    Strips German place-name prefixes the geocoder loves to add
+    ('Hansestadt Salzwedel' → 'Salzwedel', 'Landeshauptstadt München'
+    → 'München') so the region matches what our sources tag events
+    with."""
     name = name.split(",")[0].strip()
+    for prefix in _REGION_PREFIXES:
+        if name.startswith(prefix):
+            name = name[len(prefix):].strip()
+            break
     name = re.split(r"[-–]", name)[0].strip()
     return name
 
