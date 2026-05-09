@@ -1474,38 +1474,42 @@
     meta.textContent = parts.join(' · ');
     body.appendChild(meta);
 
-    // Expanded section: synopsis paragraph + trailer button + cinema list.
-    // Lives inside body so the poster column stays clean.
-    const detail = document.createElement('div');
-    detail.className = 'movie-detail';
-    body.appendChild(detail);
+    // Trailer button sits under the meta line so it stays close to the
+    // movie's headline info — even on a phone the user doesn't have to
+    // scroll for it.
+    if (movie.trailer_url) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'movie-trailer-btn';
+      btn.textContent = '▶ Trailer ansehen';
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        openTrailer(movie.trailer_url, movie.title);
+      });
+      body.appendChild(btn);
+    }
+
+    card.appendChild(body);
+
+    // Synopsis and cinema list span the full card width below the
+    // poster + body, so long synopses don't stretch a narrow column
+    // and push the cinema list far down. Both lazy-populate on first
+    // expand.
+    const synopsisBlock = document.createElement('div');
+    synopsisBlock.className = 'movie-synopsis-block';
+    card.appendChild(synopsisBlock);
 
     const cinemas = document.createElement('div');
     cinemas.className = 'movie-cinemas';
-    detail.appendChild(cinemas);
+    card.appendChild(cinemas);
 
-    card.appendChild(body);
     card.classList.add('movie-card-collapsed');
     card.addEventListener('click', () => {
       const expanded = card.classList.toggle('movie-card-expanded');
       card.classList.toggle('movie-card-collapsed', !expanded);
-      if (expanded && !detail.dataset.populated) {
+      if (expanded && !card.dataset.populated) {
         if (movie.synopsis) {
-          const synop = document.createElement('p');
-          synop.className = 'movie-synopsis';
-          synop.textContent = movie.synopsis;
-          detail.insertBefore(synop, cinemas);
-        }
-        if (movie.trailer_url) {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'movie-trailer-btn';
-          btn.textContent = '▶ Trailer ansehen';
-          btn.addEventListener('click', e => {
-            e.stopPropagation();
-            openTrailer(movie.trailer_url, movie.title);
-          });
-          detail.insertBefore(btn, cinemas);
+          populateSynopsis(synopsisBlock, movie.synopsis);
         }
         const shown = movie.cinemas.slice(0, FILM_MAX_CINEMAS);
         for (const c of shown) cinemas.appendChild(createCinemaItem(c));
@@ -1516,11 +1520,40 @@
           note.textContent = '+' + more + ' weitere Kinos';
           cinemas.appendChild(note);
         }
-        detail.dataset.populated = '1';
+        card.dataset.populated = '1';
       }
     });
 
     return card;
+  }
+
+  // Render synopsis with a 3-line clamp + "weiterlesen" toggle. Hides
+  // the toggle entirely when the text already fits without clamping.
+  function populateSynopsis(host, text) {
+    const p = document.createElement('p');
+    p.className = 'movie-synopsis movie-synopsis-clamped';
+    p.textContent = text;
+    host.appendChild(p);
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'movie-synopsis-toggle';
+    toggle.textContent = 'weiterlesen';
+    toggle.addEventListener('click', e => {
+      e.stopPropagation();
+      const clamped = p.classList.toggle('movie-synopsis-clamped');
+      toggle.textContent = clamped ? 'weiterlesen' : 'weniger anzeigen';
+    });
+    host.appendChild(toggle);
+
+    // requestAnimationFrame so layout has happened before we decide
+    // whether to keep the toggle.
+    requestAnimationFrame(() => {
+      if (p.scrollHeight <= p.clientHeight + 1) {
+        toggle.remove();
+        p.classList.remove('movie-synopsis-clamped');
+      }
+    });
   }
 
   // ── Trailer modal (fullscreen iframe) ────────────────
