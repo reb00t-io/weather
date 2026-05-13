@@ -46,12 +46,12 @@ git commands.
 
    If any cherry-pick conflicts, stop and report failure.
 
-3. **Deploy.** Run `./.ship/deploy.sh`.
+3. **Deploy.** Run `./scripts/deploy.sh`.
    - The deploy script handles its own success notification, so you
      do not need to send one.
    - If it fails with an obviously fixable problem (typo, missing
-     file you can create), fix and re-run **once**. Do not loop on
-     deploy failures — most are environmental.
+     file you can create), fix and re-run **once**. If there is a
+     deploy failure, analyze and decide if it makes sense to retry.
 
 4. **Promote.** Fast-forward the release branch to the current HEAD
    of the watched branch and push:
