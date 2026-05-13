@@ -5,6 +5,13 @@ set -euo pipefail
 # Builds, uploads, and starts the Docker container on the remote host.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Load env: committed defaults first, then local overrides (gitignored).
+set -a
+[ -f "$REPO_DIR/.env" ]         && source "$REPO_DIR/.env"
+[ -f "$REPO_DIR/.envrc.local" ] && source "$REPO_DIR/.envrc.local"
+set +a
 
 REMOTE_HOST="test.k3rnel-pan1c.com"
 REMOTE_PORT=2223
