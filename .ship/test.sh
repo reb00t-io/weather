@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-exec python -m pytest -q
+python -m pytest -q
+./test/e2e.sh
