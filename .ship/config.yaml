@@ -12,7 +12,7 @@ release_branch: release
 
 # Test and deploy commands, relative to the repo root.
 test: ./.ship/test.sh
-deploy: ./.ship/deploy.sh
+deploy: ./scripts/deploy.sh
 
 policy:
   # Auto-fix attempts when tests fail. (Currently advisory — Claude
