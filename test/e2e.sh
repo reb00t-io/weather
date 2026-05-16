@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${PORT:?PORT must be set}"
+if [ -z "${PORT:-}" ]; then
+  PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+  export PORT
+  echo "allocated free PORT=${PORT} for e2e"
+fi
 
 # Generate a random API key for e2e testing if none is provided
 if [ -z "${API_KEY:-}" ]; then
