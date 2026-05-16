@@ -18,7 +18,42 @@ if [ "${SKIP_DOCKER_BUILD:-0}" != "1" ]; then
   ./scripts/build.sh
 fi
 docker compose up -d
-trap 'docker compose down' EXIT
+
+# If we're running inside a docker container (e.g. docker-in-docker or a
+# devcontainer) host port mappings live on the parent host rather than on
+# our localhost. Detect that and reach the weather container by name on
+# its compose network instead.
+self_cid=""
+joined_network=""
+if [ -f /.dockerenv ]; then
+  self_cid=$(awk -F/ '/docker/ {print $NF; exit}' /proc/self/cgroup 2>/dev/null || true)
+fi
+
+cleanup() {
+  if [ -n "$joined_network" ] && [ -n "$self_cid" ]; then
+    docker network disconnect "$joined_network" "$self_cid" >/dev/null 2>&1 || true
+  fi
+  docker compose down
+}
+trap cleanup EXIT
+
+host="localhost"
+probe="http://localhost:${PORT}"
+
+# Quick probe: if localhost mapping isn't reachable and we're in a container,
+# join the weather compose network so we can reach the service by name.
+if [ -n "$self_cid" ]; then
+  if ! curl -sS -o /dev/null --max-time 2 "$probe" >/dev/null 2>&1; then
+    if docker network connect weather_default "$self_cid" >/dev/null 2>&1; then
+      joined_network="weather_default"
+      host="weather"
+      probe="http://weather:${PORT}"
+      echo "host port mapping unreachable; using compose network as ${probe}"
+    fi
+  fi
+fi
+
+base_url="http://${host}:${PORT}"
 
 echo "waiting for server..."
 wait_timeout_seconds=120
@@ -29,7 +64,7 @@ last_status=""
 
 while (( SECONDS < deadline )); do
   attempt=$((attempt + 1))
-  status=$(curl -sS -o /dev/null -w "%{http_code}" "http://localhost:${PORT}" || true)
+  status=$(curl -sS -o /dev/null -w "%{http_code}" "$base_url" || true)
   last_status="$status"
 
   if [ "$status" = "200" ]; then
@@ -60,7 +95,7 @@ fi
 
 echo "checking response..."
 body_file=$(mktemp)
-curl -sf http://localhost:"$PORT" > "$body_file"
+curl -sf "$base_url" > "$body_file"
 
 if ! grep -q "Wetter" "$body_file"; then
   echo "FAIL: response does not contain 'Wetter'"
@@ -72,7 +107,7 @@ rm -f "$body_file"
 
 echo "checking API endpoints..."
 # API requires Bearer auth
-geocode=$(curl -sf -H "Authorization: Bearer ${API_KEY}" "http://localhost:${PORT}/api/geocode?q=Berlin")
+geocode=$(curl -sf -H "Authorization: Bearer ${API_KEY}" "${base_url}/api/geocode?q=Berlin")
 if ! echo "$geocode" | grep -q "Berlin"; then
   echo "FAIL: geocode API did not return Berlin"
   echo "$geocode"
@@ -80,7 +115,7 @@ if ! echo "$geocode" | grep -q "Berlin"; then
 fi
 
 echo "checking API auth..."
-status=$(curl -sS -o /dev/null -w "%{http_code}" "http://localhost:${PORT}/api/geocode?q=Berlin")
+status=$(curl -sS -o /dev/null -w "%{http_code}" "${base_url}/api/geocode?q=Berlin")
 if [ "$status" != "401" ]; then
   echo "FAIL: API without auth should return 401, got ${status}"
   exit 1
